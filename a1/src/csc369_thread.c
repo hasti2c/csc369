@@ -29,7 +29,6 @@ int thread_count = 0;
 TCB *all_threads[CSC369_MAX_THREADS];
 Tid ready_queue[CSC369_MAX_THREADS];
 int rq_head, rq_tail;
-int tid_yielded_to[CSC369_MAX_THREADS];
 //**************************************************************************************************
 // Helper Functions
 //**************************************************************************************************
@@ -117,8 +116,6 @@ int
 CSC369_ThreadInit(void)
 {
     thread_count = 1, rq_head = 0, rq_tail = 0;
-    for (int i = 0; i < CSC369_MAX_THREAD)
-        tid_yielded_to[i] = 
     running_thread = malloc(sizeof(TCB));
     if (running_thread == NULL)
         return CSC369_ERROR_OTHER;
@@ -182,9 +179,9 @@ CSC369_ThreadKill(Tid tid)
 int
 CSC369_ThreadYield()
 {
+    volatile int tid_called = -1;
     int err = getcontext(&running_thread->context);
     assert(!err); // TODO this or perror or fprintf?
-    volatile Tid tid_called = -1;
     if (tid_called == -1) {
         tid_called = rq_dequeue(ready_queue);
         if (tid_called == -1) // empty ready queue
