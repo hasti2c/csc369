@@ -3,8 +3,8 @@
 #include "csc369_thread.h"
 
 #include <ucontext.h>
-
 #include <stdlib.h>
+#include <assert.h>
 
 //****************************************************************************
 // Private Definitions
@@ -29,6 +29,7 @@ int thread_count = 0;
 TCB *all_threads[CSC369_MAX_THREADS];
 Tid ready_queue[CSC369_MAX_THREADS];
 int rq_head, rq_tail;
+int tid_yielded_to[CSC369_MAX_THREADS];
 //**************************************************************************************************
 // Helper Functions
 //**************************************************************************************************
@@ -36,7 +37,7 @@ int rq_head, rq_tail;
  * @return unique tid not used by any threads in tl if tl not full, -1 if tl full.
  */
 int get_available_tid(TCB** tl) {
-    for (int i = 0; i < CSC369_MAX_THREADS; i++)
+    for (int i = 1; i < CSC369_MAX_THREADS; i++)
         if (tl[i] == NULL)
             return i;
     return -1;
@@ -99,9 +100,9 @@ Tid rq_dequeue(Tid* rq){
         return -1;
 
     Tid tid = rq[rq_head];
-    rq_head--;
-    if (rq_head == -1)
-        rq_head = CSC369_MAX_THREADS - 1;
+    rq_head++;
+    if (rq_head == CSC369_MAX_THREADS)
+        rq_head = 0;
     return tid;
 }
 
@@ -116,11 +117,13 @@ int
 CSC369_ThreadInit(void)
 {
     thread_count = 1, rq_head = 0, rq_tail = 0;
+    for (int i = 0; i < CSC369_MAX_THREAD)
+        tid_yielded_to[i] = 
     running_thread = malloc(sizeof(TCB));
     if (running_thread == NULL)
         return CSC369_ERROR_OTHER;
 
-    running_thread->tid = 0;
+    running_thread->tid = 2;
     running_thread->state = RUNNING;
     int err = getcontext(&running_thread->context);
     err &= tl_add(all_threads, running_thread);
@@ -179,7 +182,27 @@ CSC369_ThreadKill(Tid tid)
 int
 CSC369_ThreadYield()
 {
-  return -1;
+    int err = getcontext(&running_thread->context);
+    assert(!err); // TODO this or perror or fprintf?
+    volatile Tid tid_called = -1;
+    if (tid_called == -1) {
+        tid_called = rq_dequeue(ready_queue);
+        if (tid_called == -1) // empty ready queue
+            return running_thread->tid;
+        assert(tid_called != -2);
+
+        int err = rq_enqueue(ready_queue, running_thread->tid);
+        assert(err != -1 && err != -2);
+        
+        assert(tid_called >= 0 && tid_called < CSC369_MAX_THREADS);
+        TCB *tcb_called = all_threads[tid_called];
+        assert(tcb_called != NULL);
+        running_thread = tcb_called;
+        
+        err = setcontext(&tcb_called->context);
+        assert(!err);
+    }
+    return tid_called;
 }
 
 int
