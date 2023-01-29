@@ -126,6 +126,33 @@ int rq_remove(Tid tid) { // TODO Test
 }
 
 /**
+ * Switch to thread with tid.
+ *
+ * Assumes thread has already been removed from ready queue.
+ *
+ * Returns tid on success, CSC369_ERROR_TID_INVALID if tid invalid, CSC369_ERROR_THREAD_BAD if setcontext fails.
+ */
+int switch_thread(Tid tid) {
+    if (tid < 0 || tid > CSC369_MAX_THREADS)
+        return CSC369_ERROR_TID_INVALID;
+    TCB *tcb = all_threads[tid];
+    if (tcb == NULL)
+        return CSC369_ERROR_TID_INVALID;
+    tcb->state = RUNNING;
+
+    int err;
+    if (running_thread->state != ZOMBIE) {
+        err = rq_enqueue(running_thread->tid);
+        assert(!err);
+        running_thread->state = READY;
+    }
+
+    running_thread = tcb;
+    err = setcontext(&tcb->context);
+    return CSC369_ERROR_THREAD_BAD; // shouldn't get here.
+}
+ 
+/**
  * Free memory allocated to tcb and remove tcb from all_threads, which "frees" its TID.
  *
  * Process should NOT be the running thread, nor be in the ready queue. 
@@ -244,31 +271,26 @@ CSC369_ThreadKill(Tid tid)
 int
 CSC369_ThreadYield()
 {
-    volatile int tid_called = -1;
+    volatile int called = 0;
     int err = getcontext(&running_thread->context);
-    if (err)
-        return CSC369_ERROR_OTHER; // TODO this or assert?
-    if (tid_called == -1) {
-        tid_called = rq_dequeue();
-        if (tid_called == -1) // empty ready queue
+    assert(!err);  // TODO this or error?
+    int tid;    
+    if (!called) {
+        tid = rq_dequeue();
+        if (tid == -1) // empty ready queue
             return running_thread->tid;
-        assert(tid_called != -2);
+        assert(tid != -2);
 
-        int err = rq_enqueue(running_thread->tid);
-        assert(!err);
-        
-        assert(tid_called >= 0 && tid_called < CSC369_MAX_THREADS);
-        TCB *tcb_called = all_threads[tid_called];
-        assert(tcb_called != NULL);
-        running_thread->state = READY;
-        tcb_called->state = RUNNING;
-        running_thread = tcb_called;
-        
-        err = setcontext(&tcb_called->context);
-        if (err)
-            return CSC369_ERROR_OTHER;
+        called = 1;
+        err = switch_thread(tid);
+        return err; // should not get here.
     }
-    return tid_called;
+    // only gets here when exectues again.
+    if (zombie_thread != NULL) {
+        free_thread(zombie_thread);
+        zombie_thread = NULL;
+    }
+    return tid;
 }
 
 int
@@ -276,30 +298,23 @@ CSC369_ThreadYieldTo(Tid tid) // TODO test, also check error value returns
 {
     volatile int called = 0;
     int err = getcontext(&running_thread->context);
-    if (err)
-        return CSC369_ERROR_THREAD_BAD;
+    assert(!err);
     if (!called) {
         if (tid == running_thread->tid)
             return tid;
 
-        int ret = rq_remove(tid);
-        if (ret)
+        int err = rq_remove(tid);
+        if (err)
             return CSC369_ERROR_TID_INVALID;
         
-        int err = rq_enqueue(running_thread->tid);
-        assert(!err);
-        
-        assert(tid >= 0 && tid < CSC369_MAX_THREADS);
-        TCB *tcb = all_threads[tid];
-        assert(tcb != NULL);
-        running_thread->state = READY;
-        tcb->state = RUNNING;
-        running_thread = tcb;
-        
         called = 1;
-        err = setcontext(&tcb->context);
-        if (err)
-            return CSC369_ERROR_THREAD_BAD;
+        err = switch_thread(tid);
+        return err; // should not get here.
+    }
+    // only gets here when exectues again.
+    if (zombie_thread != NULL) {
+        free_thread(zombie_thread);
+        zombie_thread = NULL;
     }
     return tid;
 }
