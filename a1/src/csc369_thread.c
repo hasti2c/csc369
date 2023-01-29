@@ -25,6 +25,7 @@ typedef struct
 // Private Global Variables (Library State)
 //**************************************************************************************************
 TCB *running_thread;
+TCB *zombie_thread; // can keep only one zombie since next running thread frees it before doing anything else.
 int thread_count = 0;
 TCB *all_threads[CSC369_MAX_THREADS];
 Tid ready_queue[CSC369_MAX_THREADS];
@@ -43,69 +44,111 @@ int get_available_tid(TCB** tl) {
 }
 
 /**
- * Add tcb to thread list tl at index tid.
+ * Add tcb to thread list all_threads at index tid.
  *
  * @return 0 on success, 1 on failure.
  */
-int tl_add(TCB** tl, TCB* tcb) {
+int tl_add(TCB* tcb) {
     Tid tid = tcb->tid;
-    if (tid < 0 || tid >= CSC369_MAX_THREADS || tl[tid] != NULL)
+    if (tid < 0 || tid >= CSC369_MAX_THREADS || all_threads[tid] != NULL)
         return 1;
-    tl[tid] = tcb;
+    all_threads[tid] = tcb;
     thread_count++;
     return 0;
 }
 
 /**
- * Remove tcb with tid from tl.
+ * Remove tcb with tid from thread list all_threads.
  *
  * @return 0 on success, 1 on failure (if no such tid).
  */
-int tl_remove(TCB** tl, Tid tid) {
-    if (tl[tid] == NULL)
+int tl_remove(Tid tid) {
+    if (tid < 0 || tid >= CSC369_MAX_THREADS || all_threads[tid] == NULL)
         return 1;
-    tl[tid] = NULL;
+    all_threads[tid] = NULL;
     thread_count--;
     return 0;
 }
 
 /**
- * Enqueue tid in ready queue rq.
+ * Enqueue tid in ready_queue.
  * 
- * @return 0 on success, -1 if rq full, -2 if rq_head, rq_tail invalid.
+ * @return 0 on success, -1 if ready_queue full, -2 if rq_head, rq_tail invalid.
  */
-int rq_enqueue(Tid* rq, Tid tid) {
+int rq_enqueue(Tid tid) {
     if (rq_head < 0 || rq_head >= CSC369_MAX_THREADS || rq_tail < 0 || rq_tail >= CSC369_MAX_THREADS)
         return -2;
     if (rq_tail == rq_head - 1 || (rq_head == CSC369_MAX_THREADS - 1 && rq_tail == 0))
         return -1;
     
-    rq[rq_tail] = tid;
-    rq_tail++;
-    if (rq_tail == CSC369_MAX_THREADS)
-        rq_tail = 0;
+    ready_queue[rq_tail] = tid;
+    rq_tail = (rq_tail + 1) % CSC369_MAX_THREADS;
     return 0;
 }
 
 /**
- * Dequeue first element in rq.
+ * Dequeue first element in ready_queue.
  * 
- * @return dequeued tid on success, -1 if rq empty, -2 if rq_head,rq_tail invalid.
+ * @return dequeued tid on success, -1 if ready_queue empty, -2 if rq_head,rq_tail invalid.
  */
-Tid rq_dequeue(Tid* rq){
+Tid rq_dequeue() {
     if (rq_head < 0 || rq_head >= CSC369_MAX_THREADS || rq_tail < 0 || rq_tail >= CSC369_MAX_THREADS)
         return -2;
     if (rq_head == rq_tail)
         return -1;
 
-    Tid tid = rq[rq_head];
-    rq_head++;
-    if (rq_head == CSC369_MAX_THREADS)
-        rq_head = 0;
+    Tid tid = ready_queue[rq_head];
+    rq_head = (rq_head + 1) % CSC369_MAX_THREADS;
     return tid;
 }
 
+/** Remove tid from ready_queue and move everything else forward.
+ * 
+ * @return 0 on succes, 1 on failure (tid not in ready_queue).
+ */
+int rq_remove(Tid tid) { // TODO Test
+    if (rq_head == rq_tail)
+        return 1;
+
+    int found = 0;
+    for (int cur = rq_head; cur < rq_tail; cur = (cur + 1) % CSC369_MAX_THREADS) {
+        if (ready_queue[cur] == tid)
+            found = 1;
+        if (found) {
+            int next = (cur + 1) % CSC369_MAX_THREADS;
+            ready_queue[cur] = ready_queue[next];
+        }
+    }
+    if (!found)
+        return 1;
+    rq_tail = (rq_tail - 1 + CSC369_MAX_THREADS) % CSC369_MAX_THREADS;
+    return 0;
+}
+
+/**
+ * Free memory allocated to tcb and remove tcb from all_threads, which "frees" its TID.
+ *
+ * Process should NOT be the running thread, nor be in the ready queue. 
+ *
+ * Return 0 on success, 1 on failure.
+ */
+int free_thread(TCB* tcb) {
+    int err = tl_remove(tcb->tid);
+    if (err = 1)
+        return 1;
+    free(tcb->stack); 
+    free(tcb);
+    return 0;
+}
+
+/**
+ * Call f then exit properly by calling CSC369_ThreadExit(). 
+ */
 void thread_stub(void (*f)(void *), void *arg) {
+    if (zombie_thread != NULL) {
+        free_thread(zombie_thread);
+        zombie_thread = NULL;
+    }
     f(arg);
     CSC369_ThreadExit();
 }
@@ -120,10 +163,10 @@ CSC369_ThreadInit(void)
     if (running_thread == NULL)
         return CSC369_ERROR_OTHER;
 
-    running_thread->tid = 2;
+    running_thread->tid = 0;
     running_thread->state = RUNNING;
     int err = getcontext(&running_thread->context);
-    err &= tl_add(all_threads, running_thread);
+    err &= tl_add(running_thread);
     if (err)
         return CSC369_ERROR_OTHER;
 }
@@ -159,8 +202,8 @@ CSC369_ThreadCreate(void (*f)(void*), void* arg)
     tcb->context.uc_mcontext.gregs[REG_RSP] = (greg_t) tcb->stack + CSC369_THREAD_STACK_SIZE - 1; // TODO check
     // TODO handle byte alignment, @149 on piazza
 
-    err = tl_add(all_threads, tcb);
-    err &= rq_enqueue(ready_queue, tcb->tid);
+    err = tl_add(tcb);
+    err &= rq_enqueue(tcb->tid);
     if (err)
         return CSC369_ERROR_OTHER;
     return tcb->tid;
@@ -168,12 +211,23 @@ CSC369_ThreadCreate(void (*f)(void*), void* arg)
 
 void
 CSC369_ThreadExit()
-{}
+{
+    // TODO tid 0
+    if (thread_count <= 1) 
+        exit(0);
+    
+    running_thread->state = ZOMBIE;
+    zombie_thread = running_thread; 
+    int err = CSC369_ThreadYield();
+    exit(-1); 
+}
 
 Tid
 CSC369_ThreadKill(Tid tid)
 {
-  return -1;
+    //int err = rq_remove(
+    //PCB* pcb = 
+    return -1;
 }
 
 int
@@ -181,29 +235,60 @@ CSC369_ThreadYield()
 {
     volatile int tid_called = -1;
     int err = getcontext(&running_thread->context);
-    assert(!err); // TODO this or perror or fprintf?
+    if (err)
+        return CSC369_ERROR_OTHER; // TODO this or assert?
     if (tid_called == -1) {
-        tid_called = rq_dequeue(ready_queue);
+        tid_called = rq_dequeue();
         if (tid_called == -1) // empty ready queue
             return running_thread->tid;
         assert(tid_called != -2);
 
-        int err = rq_enqueue(ready_queue, running_thread->tid);
-        assert(err != -1 && err != -2);
+        int err = rq_enqueue(running_thread->tid);
+        assert(!err);
         
         assert(tid_called >= 0 && tid_called < CSC369_MAX_THREADS);
         TCB *tcb_called = all_threads[tid_called];
         assert(tcb_called != NULL);
+        running_thread->state = READY;
+        tcb_called->state = RUNNING;
         running_thread = tcb_called;
         
         err = setcontext(&tcb_called->context);
-        assert(!err);
+        if (err)
+            return CSC369_ERROR_OTHER;
     }
     return tid_called;
 }
 
 int
-CSC369_ThreadYieldTo(Tid tid)
+CSC369_ThreadYieldTo(Tid tid) // TODO test, also check error value returns
 {
-  return -1;
+    volatile int called = 0;
+    int err = getcontext(&running_thread->context);
+    if (err)
+        return CSC369_ERROR_THREAD_BAD;
+    if (!called) {
+        if (tid == running_thread->tid)
+            return tid;
+
+        int ret = rq_remove(tid);
+        if (ret)
+            return CSC369_ERROR_TID_INVALID;
+        
+        int err = rq_enqueue(running_thread->tid);
+        assert(!err);
+        
+        assert(tid >= 0 && tid < CSC369_MAX_THREADS);
+        TCB *tcb = all_threads[tid];
+        assert(tcb != NULL);
+        running_thread->state = READY;
+        tcb->state = RUNNING;
+        running_thread = tcb;
+        
+        called = 1;
+        err = setcontext(&tcb->context);
+        if (err)
+            return CSC369_ERROR_THREAD_BAD;
+    }
+    return tid;
 }
