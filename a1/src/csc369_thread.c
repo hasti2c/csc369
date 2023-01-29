@@ -225,9 +225,20 @@ CSC369_ThreadExit()
 Tid
 CSC369_ThreadKill(Tid tid)
 {
-    //int err = rq_remove(
-    //PCB* pcb = 
-    return -1;
+    if (tid == running_thread->tid)
+        return CSC369_ERROR_THREAD_BAD;
+    else if (tid < 0 || tid >= CSC369_MAX_THREADS)
+        return CSC369_ERROR_TID_INVALID;
+    TCB *tcb = all_threads[tid];
+    if (tcb == NULL)
+        return CSC369_ERROR_TID_INVALID;
+        
+    int err = rq_remove(tid); 
+    if (err) // thread not in ready queue
+        return CSC369_ERROR_SYS_THREAD;
+    err = free_thread(tcb);    
+    assert(!err);
+    return tid;
 }
 
 int
