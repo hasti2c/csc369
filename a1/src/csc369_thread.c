@@ -196,6 +196,7 @@ CSC369_ThreadInit(void)
     err &= tl_add(running_thread);
     if (err)
         return CSC369_ERROR_OTHER;
+    return 0;
 }
 
 Tid
@@ -216,7 +217,7 @@ CSC369_ThreadCreate(void (*f)(void*), void* arg)
         return CSC369_ERROR_SYS_MEM;
     tcb->tid = new_tid;
     tcb->state = READY;
-    tcb->stack = malloc(CSC369_THREAD_STACK_SIZE);
+    tcb->stack = malloc(CSC369_THREAD_STACK_SIZE + 16);
     if (tcb->stack == NULL)
         return CSC369_ERROR_SYS_MEM;
 
@@ -226,8 +227,9 @@ CSC369_ThreadCreate(void (*f)(void*), void* arg)
     tcb->context.uc_mcontext.gregs[REG_RIP] = (greg_t) &thread_stub;
     tcb->context.uc_mcontext.gregs[REG_RDI] = (greg_t) f;
     tcb->context.uc_mcontext.gregs[REG_RSI] = (greg_t) arg;
-    tcb->context.uc_mcontext.gregs[REG_RSP] = (greg_t) tcb->stack + CSC369_THREAD_STACK_SIZE - 1; // TODO check
-    // TODO handle byte alignment, @149 on piazza
+
+    tcb->context.uc_mcontext.gregs[REG_RSP] = (greg_t) tcb->stack + CSC369_THREAD_STACK_SIZE + 15;
+    tcb->context.uc_mcontext.gregs[REG_RSP] -= (tcb->context.uc_mcontext.gregs[REG_RSP] - 8) % 16;
 
     err = tl_add(tcb);
     err &= rq_enqueue(tcb->tid);
@@ -245,8 +247,8 @@ CSC369_ThreadExit()
     
     running_thread->state = ZOMBIE;
     zombie_thread = running_thread; 
-    int err = CSC369_ThreadYield();
-    exit(-1); 
+    CSC369_ThreadYield();
+    exit(-1); // should not get here.
 }
 
 Tid
@@ -303,9 +305,11 @@ CSC369_ThreadYieldTo(Tid tid) // TODO test, also check error value returns
         if (tid == running_thread->tid)
             return tid;
 
+        if (tid < 0 || tid >= CSC369_MAX_THREADS)
+            return CSC369_ERROR_TID_INVALID;
         int err = rq_remove(tid);
         if (err)
-            return CSC369_ERROR_TID_INVALID;
+            return CSC369_ERROR_THREAD_BAD;
         
         called = 1;
         err = switch_thread(tid);
