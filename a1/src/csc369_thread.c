@@ -161,7 +161,7 @@ int switch_thread(Tid tid) {
  */
 int free_thread(TCB* tcb) {
     int err = tl_remove(tcb->tid);
-    if (err = 1)
+    if (err)
         return 1;
     free(tcb->stack); 
     free(tcb);
@@ -258,7 +258,7 @@ CSC369_ThreadKill(Tid tid)
         return CSC369_ERROR_TID_INVALID;
     TCB *tcb = all_threads[tid];
     if (tcb == NULL)
-        return CSC369_ERROR_TID_INVALID;
+        return CSC369_ERROR_SYS_THREAD;
         
     int err = rq_remove(tid); 
     if (err) // thread not in ready queue
