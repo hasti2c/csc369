@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <assert.h>
 
+
 //****************************************************************************
 // Private Definitions
 //****************************************************************************
@@ -157,6 +158,7 @@ int switch_thread(Tid tid) {
  */
 int free_thread(TCB* tcb) {
     int err = tl_remove(tcb->tid);
+    assert(!err);
     if (err)
         return 1;
     free(tcb->stack); 
@@ -204,10 +206,10 @@ CSC369_ThreadId(void)
 
 Tid
 CSC369_ThreadCreate(void (*f)(void*), void* arg)
-{
+{   
     Tid new_tid = get_available_tid();
     if (new_tid == -1)
-        return CSC369_ERROR_SYS_THREAD;
+         return CSC369_ERROR_SYS_THREAD;
 
     TCB* tcb = malloc(sizeof(TCB));
     if (tcb == NULL)
@@ -270,7 +272,7 @@ int
 CSC369_ThreadYield()
 {
     volatile int called = 0;
-    int err = getcontext(&running_thread->context);
+    int err = getcontext(&running_thread->context); 
     assert(!err); 
     int tid;
     if (!called) {
