@@ -137,15 +137,14 @@ int switch_thread(Tid tid) {
         return CSC369_ERROR_THREAD_BAD;
     tcb->state = RUNNING;
 
-    int err;
     if (running_thread->state != ZOMBIE) {
-        err = rq_enqueue(running_thread->tid);
+        int err = rq_enqueue(running_thread->tid);
         assert(!err);
         running_thread->state = READY;
     }
 
     running_thread = tcb;
-    err = setcontext(&tcb->context);
+    setcontext(&tcb->context);
     return CSC369_ERROR_THREAD_BAD; // shouldn't get here.
 }
  
@@ -273,7 +272,7 @@ CSC369_ThreadYield()
     volatile int called = 0;
     int err = getcontext(&running_thread->context);
     assert(!err); 
-    int tid;    
+    int tid;
     if (!called) {
         tid = rq_dequeue();
         if (tid == -1) // empty ready queue
