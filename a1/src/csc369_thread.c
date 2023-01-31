@@ -26,7 +26,6 @@ typedef struct
 //**************************************************************************************************
 TCB *running_thread;
 TCB *zombie_thread; // can keep only one zombie since next running thread frees it before doing anything else.
-int thread_count = 0;
 TCB *all_threads[CSC369_MAX_THREADS];
 Tid ready_queue[CSC369_MAX_THREADS];
 int rq_head, rq_tail;
@@ -53,7 +52,6 @@ int tl_add(TCB* tcb) {
     if (tid < 0 || tid >= CSC369_MAX_THREADS || all_threads[tid] != NULL)
         return 1;
     all_threads[tid] = tcb;
-    thread_count++;
     return 0;
 }
 
@@ -65,8 +63,7 @@ int tl_add(TCB* tcb) {
 int tl_remove(Tid tid) {
     if (tid < 0 || tid >= CSC369_MAX_THREADS || all_threads[tid] == NULL)
         return 1;
-    all_threads[tid] = NULL;
-    thread_count--;
+    all_threads[tid] = NULL; 
     return 0;
 }
 
@@ -185,7 +182,7 @@ void thread_stub(void (*f)(void *), void *arg) {
 int
 CSC369_ThreadInit(void)
 {
-    thread_count = 1, rq_head = 0, rq_tail = 0;
+    rq_head = 0, rq_tail = 0;
     running_thread = malloc(sizeof(TCB));
     if (running_thread == NULL)
         return CSC369_ERROR_OTHER;
@@ -242,7 +239,7 @@ void
 CSC369_ThreadExit()
 {
     // TODO tid 0
-    if (thread_count <= 1) 
+    if (rq_head == rq_tail) // empty
         exit(0);
     
     running_thread->state = ZOMBIE;
