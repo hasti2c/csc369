@@ -33,11 +33,11 @@ int rq_head, rq_tail;
 // Helper Functions
 //**************************************************************************************************
 /**
- * @return unique tid not used by any threads in tl if tl not full, -1 if tl full.
+ * @return unique tid not used by any threads in all_threads if all_threads not full, -1 if all_threads full.
  */
-int get_available_tid(TCB** tl) {
-    for (int i = 1; i < CSC369_MAX_THREADS; i++)
-        if (tl[i] == NULL)
+int get_available_tid() {
+    for (int i = 0; i < CSC369_MAX_THREADS; i++)
+        if (all_threads[i] == NULL)
             return i;
     return -1;
 }
@@ -205,7 +205,7 @@ CSC369_ThreadId(void)
 Tid
 CSC369_ThreadCreate(void (*f)(void*), void* arg)
 {
-    Tid new_tid = get_available_tid(all_threads);
+    Tid new_tid = get_available_tid();
     if (new_tid == -1)
         return CSC369_ERROR_SYS_THREAD;
 
