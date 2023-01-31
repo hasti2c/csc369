@@ -131,7 +131,7 @@ int rq_remove(Tid tid) {
  * Returns tid on success, CSC369_ERROR_TID_INVALID if tid invalid, CSC369_ERROR_THREAD_BAD if fails otherwise.
  */
 int switch_thread(Tid tid) {
-    if (tid < 0 || tid > CSC369_MAX_THREADS)
+    if (tid < 0 || tid >= CSC369_MAX_THREADS)
         return CSC369_ERROR_TID_INVALID;
     TCB *tcb = all_threads[tid];
     if (tcb == NULL)
@@ -206,7 +206,8 @@ CSC369_ThreadId(void)
 
 Tid
 CSC369_ThreadCreate(void (*f)(void*), void* arg)
-{   
+{
+    assert(zombie_thread == NULL);   
     Tid new_tid = get_available_tid();
     if (new_tid == -1)
          return CSC369_ERROR_SYS_THREAD;
