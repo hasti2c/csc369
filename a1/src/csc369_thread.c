@@ -75,7 +75,7 @@ int tl_remove(Tid tid) {
 int rq_enqueue(Tid tid) {
     if (rq_head < 0 || rq_head >= CSC369_MAX_THREADS || rq_tail < 0 || rq_tail >= CSC369_MAX_THREADS)
         return -2;
-    if (rq_tail == rq_head - 1 || (rq_head == CSC369_MAX_THREADS - 1 && rq_tail == 0))
+    if (rq_tail == rq_head - 1 || (rq_tail == CSC369_MAX_THREADS - 1 && rq_head == 0))
         return -1;
     
     ready_queue[rq_tail] = tid;
@@ -108,7 +108,7 @@ int rq_remove(Tid tid) { // TODO Test
         return 1;
 
     int found = 0;
-    for (int cur = rq_head; cur < rq_tail; cur = (cur + 1) % CSC369_MAX_THREADS) {
+    for (int cur = rq_head; cur != rq_tail; cur = (cur + 1) % CSC369_MAX_THREADS) {
         if (ready_queue[cur] == tid)
             found = 1;
         if (found) {
