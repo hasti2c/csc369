@@ -75,7 +75,7 @@ int tl_remove(Tid tid) {
 int rq_enqueue(Tid tid) {
     if (rq_head < 0 || rq_head >= CSC369_MAX_THREADS || rq_tail < 0 || rq_tail >= CSC369_MAX_THREADS)
         return -2;
-    if (rq_tail == rq_head - 1 || (rq_tail == CSC369_MAX_THREADS - 1 && rq_head == 0))
+    if ((rq_head - rq_tail + CSC369_MAX_THREADS) % CSC369_MAX_THREADS == 1)
         return -1;
     
     ready_queue[rq_tail] = tid;
@@ -103,7 +103,7 @@ Tid rq_dequeue() {
  * 
  * @return 0 on succes, 1 on failure (tid not in ready_queue).
  */
-int rq_remove(Tid tid) { // TODO Test
+int rq_remove(Tid tid) {
     if (rq_head == rq_tail)
         return 1;
 
@@ -125,16 +125,16 @@ int rq_remove(Tid tid) { // TODO Test
 /**
  * Switch to thread with tid.
  *
- * Assumes thread has already been removed from ready queue.
+ * Assumes tid has already been removed from ready queue.
  *
- * Returns tid on success, CSC369_ERROR_TID_INVALID if tid invalid, CSC369_ERROR_THREAD_BAD if setcontext fails.
+ * Returns tid on success, CSC369_ERROR_TID_INVALID if tid invalid, CSC369_ERROR_THREAD_BAD if fails otherwise.
  */
 int switch_thread(Tid tid) {
     if (tid < 0 || tid > CSC369_MAX_THREADS)
         return CSC369_ERROR_TID_INVALID;
     TCB *tcb = all_threads[tid];
     if (tcb == NULL)
-        return CSC369_ERROR_TID_INVALID;
+        return CSC369_ERROR_THREAD_BAD;
     tcb->state = RUNNING;
 
     int err;
@@ -162,6 +162,7 @@ int free_thread(TCB* tcb) {
         return 1;
     free(tcb->stack); 
     free(tcb);
+    zombie_thread = NULL;
     return 0;
 }
 
@@ -170,8 +171,8 @@ int free_thread(TCB* tcb) {
  */
 void thread_stub(void (*f)(void *), void *arg) {
     if (zombie_thread != NULL) {
-        free_thread(zombie_thread);
-        zombie_thread = NULL;
+        int err = free_thread(zombie_thread);
+        assert(!err);
     }
     f(arg);
     CSC369_ThreadExit();
@@ -238,7 +239,6 @@ CSC369_ThreadCreate(void (*f)(void*), void* arg)
 void
 CSC369_ThreadExit()
 {
-    // TODO tid 0
     if (rq_head == rq_tail) // empty
         exit(0);
     
@@ -272,7 +272,7 @@ CSC369_ThreadYield()
 {
     volatile int called = 0;
     int err = getcontext(&running_thread->context);
-    assert(!err);  // TODO this or error?
+    assert(!err); 
     int tid;    
     if (!called) {
         tid = rq_dequeue();
@@ -286,14 +286,14 @@ CSC369_ThreadYield()
     }
     // only gets here when exectues again.
     if (zombie_thread != NULL) {
-        free_thread(zombie_thread);
-        zombie_thread = NULL;
+        err = free_thread(zombie_thread);
+        assert(!err);
     }
     return tid;
 }
 
 int
-CSC369_ThreadYieldTo(Tid tid) // TODO test, also check error value returns
+CSC369_ThreadYieldTo(Tid tid)
 {
     volatile int called = 0;
     int err = getcontext(&running_thread->context);
@@ -314,8 +314,8 @@ CSC369_ThreadYieldTo(Tid tid) // TODO test, also check error value returns
     }
     // only gets here when exectues again.
     if (zombie_thread != NULL) {
-        free_thread(zombie_thread);
-        zombie_thread = NULL;
+        int err = free_thread(zombie_thread);
+        assert(!err);
     }
     return tid;
 }
