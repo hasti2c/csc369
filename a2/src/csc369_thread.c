@@ -408,8 +408,7 @@ CSC369_ThreadKill(Tid tid)
     return CSC369_ERROR_SYS_THREAD;
   Queue_Remove(&ready_threads, tid); // it might or might not be in ready queue
  
-void
-TCB_Zombify(Tid tid, int exit_code); 
+  TCB_Zombify(tid, CSC369_EXIT_CODE_KILL); 
   if (TCB_CanFree(tid))
     TCB_Free(tid);
   CSC369_InterruptsSet(prev_state);
@@ -535,9 +534,9 @@ CSC369_ThreadWakeNext(CSC369_WaitQueue* queue)
   int ret = 1;
   int prev_state = CSC369_InterruptsDisable();
   Tid tid = Queue_Dequeue(queue);
-  if (tid == -1)
+  if (tid == -1) {
     ret = 0;
-  else {
+  } else {
     TCB* tcb = &threads[tid];
     tcb->state = CSC369_THREAD_READY;
     int err = Queue_Enqueue(&ready_threads, tid);
@@ -579,6 +578,8 @@ CSC369_ThreadJoin(Tid tid, int* exit_code)
   assert(ret >= 0);
   *exit_code = tcb->exit_code;
   tcb->join_threads_num--;
+  if (TCB_CanFree(tcb->tid))
+    TCB_Free(tcb->tid);
   CSC369_InterruptsSet(prev_state);
   return tid;
 }
