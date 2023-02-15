@@ -27,20 +27,9 @@ typedef enum
 } CSC369_ThreadState;
 
 /**
- * A wait queue.
- */
-typedef struct csc369_wait_queue_t
-{ 
-  Tid threads[CSC369_MAX_THREADS];
-  int head;
-  int tail;
-} CSC369_WaitQueue;
-// TODO implement as linked list.
-
-/**
  * The Thread Control Block.
  */
-typedef struct
+typedef struct thread_control_block
 {
   Tid tid;
 
@@ -61,11 +50,22 @@ typedef struct
   /**
    * The queue of threads that are waiting on this thread to finish.
    */
-  CSC369_WaitQueue join_threads;
+  CSC369_WaitQueue* join_threads;
 
   int join_threads_num;
+
+  struct thread_control_block* next_in_queue;
 } TCB;
 
+/**
+ * A wait queue.
+ */
+typedef struct csc369_wait_queue_t
+{ 
+  TCB* head;
+  TCB* tail;
+} CSC369_WaitQueue;
+// TODO implement as linked list.
 //**************************************************************************************************
 // Private Global Variables (Library State)
 //**************************************************************************************************
@@ -85,44 +85,31 @@ CSC369_WaitQueue ready_threads;
  * Threads that need to be cleaned up.
  */
 CSC369_WaitQueue zombie_threads;
-
 //**************************************************************************************************
 // Helper Functions
 //**************************************************************************************************
 void
 Queue_Init(CSC369_WaitQueue* queue)
 {
-  queue->head = 0;
-  queue->tail = 0;
+  queue->head = NULL;
+  queue->tail = NULL;
 }
 
 int
 Queue_IsEmpty(CSC369_WaitQueue* queue)
 {
-  return queue->head == queue->tail;
+  return queue->head == NULL;
 }
 
-int
-Queue_IsFull(CSC369_WaitQueue* queue)
-{
-  return (queue->head - queue->tail + CSC369_MAX_THREADS) % CSC369_MAX_THREADS == 1;
-}
-
-/**
- * @return 0 on success, -1 if queue full.
- */
-int
+void
 Queue_Enqueue(CSC369_WaitQueue* queue, Tid tid)
 {
   assert(!CSC369_InterruptsAreEnabled());
-  assert(queue->head >= 0 && queue->head < CSC369_MAX_THREADS);
-  assert(queue->tail >= 0 && queue->tail < CSC369_MAX_THREADS);
-  if (Queue_IsFull(queue))
-    return -1;
-
-  queue->threads[queue->tail] = tid;
-  queue->tail = (queue->tail + 1) % CSC369_MAX_THREADS;
-  return 0;
+  TCB* tcb = &threads[tid];
+  tcb->next_in_queue = queue->head;
+  queue->head = tcb;
+  if (queue->tail == NULL)
+    queue->tail = tcb;
 }
 
 /**
@@ -132,18 +119,19 @@ Tid
 Queue_Dequeue(CSC369_WaitQueue* queue)
 {
   assert(!CSC369_InterruptsAreEnabled());
-  assert(queue->head >= 0 && queue->head < CSC369_MAX_THREADS);
-  assert(queue->tail >= 0 && queue->tail < CSC369_MAX_THREADS);
   if (Queue_IsEmpty(queue))
     return -1;
-
-  Tid tid = queue->threads[queue->head];
-  queue->head = (queue->head + 1) % CSC369_MAX_THREADS;
-  return tid;
+  
+  TCB* tcb = queue->head;
+  queue->head = queue->head->next_in_queue;
+  if (queue->tail == tcb)
+    queue->tail = NULL;
+  tcb->next_in_queue = NULL;
+  return tcb->tid;
 }
 
 /**
- * Remove tid from queue and move everything after it one space back.
+ * Remove tid from queue.
  *
  * @return 0 on success, -1 if tid not in queue;
  */
@@ -151,24 +139,23 @@ int
 Queue_Remove(CSC369_WaitQueue* queue, Tid tid)
 {
   assert(!CSC369_InterruptsAreEnabled());
-  assert(queue->head >= 0 && queue->head < CSC369_MAX_THREADS);
-  assert(queue->tail >= 0 && queue->tail < CSC369_MAX_THREADS);
   if (Queue_IsEmpty(queue))
     return -1;
 
-  int found = 0;
-  for (int cur = queue->head; cur != queue->tail; cur = (cur + 1) % CSC369_MAX_THREADS) {
-    if (!found && queue->threads[cur] == tid)
-      found = 1;
-    if (found) {
-      int next = (cur + 1) % CSC369_MAX_THREADS;
-      queue->threads[cur] = queue->threads[next];
-    }
-  }
-  if (!found)
-    return -1;
-  queue->tail = (queue->tail - 1 + CSC369_MAX_THREADS) % CSC369_MAX_THREADS;
-  return 0;   
+  TCB* prev = NULL;
+  for (TCB* cur = queue->head; cur != NULL; prev = cur, cur = cur->next_in_queue) {
+    if (cur->tid != tid)
+      continue;
+    if (prev == NULL)
+      queue->head = cur->next_in_queue;
+    else
+      prev->next_in_queue = cur->next_in_queue;
+    if (queue->tail == cur)
+      queue->tail = NULL;
+    cur->next_in_queue = NULL;
+    return 0;
+  } 
+  return -1;
 }
 
 void 
@@ -176,8 +163,10 @@ TCB_Init(TCB* tcb, Tid tid)
 {
   tcb->tid = tid;
   tcb->state = CSC369_THREAD_FREE;
-  Queue_Init(&tcb->join_threads);
+  tcb->join_threads = malloc(sizeof(CSC369_WaitQueue));
+  Queue_Init(tcb->join_threads);
   tcb->join_threads_num = 0;
+  tcb->next_in_queue = NULL;
 }
 
 /*
@@ -200,19 +189,15 @@ TCB_Zombify(Tid tid, int exit_code) {
   TCB* tcb = &threads[tid];
   tcb->exit_code = exit_code;
   tcb->state = CSC369_THREAD_ZOMBIE;
-  int err = Queue_Enqueue(&zombie_threads, tcb->tid);
-  assert(!err);
-  CSC369_ThreadWakeAll(&tcb->join_threads);
+  Queue_Enqueue(&zombie_threads, tcb->tid);
+  CSC369_ThreadWakeAll(tcb->join_threads);
 }
 
 int 
 TCB_CanFree(Tid tid) {
   assert(!CSC369_InterruptsAreEnabled());
   TCB* tcb = &threads[tid];
-  if (tcb->join_threads_num > 0)
-    return 1;
-  else
-    return 0;
+  return tcb->join_threads_num <= 0;
 }
 
 /**
@@ -232,17 +217,19 @@ TCB_Free(Tid tid)
   TCB* tcb = &threads[tid]; 
   tcb->state = CSC369_THREAD_FREE;
   tcb->context = (ucontext_t) {0}; // TODO correct?
-  tcb->exit_code = 0;
-  Queue_Init(&tcb->join_threads);
+  tcb->exit_code = 30; // TODO fix
+  Queue_Init(tcb->join_threads);
   free(tcb->stack);
 }
 
 void
 Queue_FreeAll(CSC369_WaitQueue* queue) {
   int prev_state = CSC369_InterruptsDisable();
-  for (int cur = queue->head; cur != queue->tail; cur = (cur + 1) % CSC369_MAX_THREADS) {
-    if (TCB_CanFree(queue->threads[cur]))
-      TCB_Free(queue->threads[cur]);
+  for (TCB* cur = queue->head; cur != NULL; cur = cur->next_in_queue) {
+    if (TCB_CanFree(cur->tid)) {
+      TCB_Free(cur->tid);
+      Queue_Remove(queue, cur->tid);
+    }
   }
   CSC369_InterruptsSet(prev_state);
 }
@@ -311,9 +298,7 @@ TCB_Create(Tid tid, void (*f)(void*), void* arg) {
   if (err)
     return CSC369_ERROR_OTHER;
 
-  err = Queue_Enqueue(&ready_threads, tid);
-  if (err)
-    return CSC369_ERROR_OTHER;
+  Queue_Enqueue(&ready_threads, tid);
   return tid;
 }
 
@@ -332,8 +317,7 @@ int Switch(Tid tid) {
   tcb->state = CSC369_THREAD_RUNNING;
 
   if (threads[running_thread].state == CSC369_THREAD_RUNNING) {
-    int err = Queue_Enqueue(&ready_threads, running_thread);
-    assert(!err);
+    Queue_Enqueue(&ready_threads, running_thread);
     threads[running_thread].state = CSC369_THREAD_READY;
   }
 
@@ -385,9 +369,9 @@ CSC369_ThreadExit(int exit_code)
   // TODO exit code fatal
   // TODO tid 0
   int prev_state = CSC369_InterruptsDisable();
-  if (Queue_IsEmpty(&ready_threads)) // empty
-     exit(exit_code);
   TCB_Zombify(running_thread, exit_code);
+  if (Queue_IsEmpty(&ready_threads))
+     exit(exit_code);
   CSC369_ThreadYield();
   CSC369_InterruptsSet(prev_state);
 
@@ -512,7 +496,6 @@ int
 CSC369_ThreadSleep(CSC369_WaitQueue* queue)
 {
   assert(queue != NULL);
-  assert(!Queue_IsFull(queue)); 
   
   int prev_state = CSC369_InterruptsDisable();  
   if (Queue_IsEmpty(&ready_threads))
@@ -520,7 +503,8 @@ CSC369_ThreadSleep(CSC369_WaitQueue* queue)
 
   TCB* tcb = &threads[running_thread];
   tcb->state = CSC369_THREAD_BLOCKED; 
-  
+  Queue_Enqueue(queue, tcb->tid); 
+ 
   CSC369_InterruptsSet(prev_state);
   int ret = CSC369_ThreadYield();
   CSC369_InterruptsSet(prev_state);
@@ -539,8 +523,7 @@ CSC369_ThreadWakeNext(CSC369_WaitQueue* queue)
   } else {
     TCB* tcb = &threads[tid];
     tcb->state = CSC369_THREAD_READY;
-    int err = Queue_Enqueue(&ready_threads, tid);
-    assert(!err);
+    Queue_Enqueue(&ready_threads, tid);
   }
   CSC369_InterruptsSet(prev_state);
   return ret;
@@ -574,7 +557,7 @@ CSC369_ThreadJoin(Tid tid, int* exit_code)
     return CSC369_ERROR_SYS_THREAD;
   
   tcb->join_threads_num++;
-  int ret = CSC369_ThreadSleep(&tcb->join_threads);
+  int ret = CSC369_ThreadSleep(tcb->join_threads);
   assert(ret >= 0);
   *exit_code = tcb->exit_code;
   tcb->join_threads_num--;
