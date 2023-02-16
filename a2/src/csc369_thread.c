@@ -2,17 +2,21 @@
 
 #include <ucontext.h>
 
-#include <assert.h>
 #include <sys/time.h>
 #include <stdlib.h>
 
-//#define DEBUG_USE_VALGRIND // uncomment to debug with valgrind // TODO uncomment
+//#define DEBUG_USE_VALGRIND // uncomment to debug with valgrind
 #ifdef DEBUG_USE_VALGRIND
 #include <valgrind/valgrind.h>
 #endif
 
 #include "csc369_interrupts.h"
 
+#ifdef NDEBUG
+#define assert(x) do { (void)sizeof(x);} while (0)
+#else
+#include <assert.h>
+#endif
 //****************************************************************************
 // Private Definitions
 //****************************************************************************
@@ -216,6 +220,7 @@ TCB_Free(Tid tid)
 {
   assert(!CSC369_InterruptsAreEnabled());
   assert(TCB_CanFree(tid));
+  assert(tid != running_thread);
   TCB* tcb = &threads[tid]; 
   tcb->state = CSC369_THREAD_FREE;
   tcb->context = (ucontext_t) {0};
@@ -242,7 +247,7 @@ Queue_FreeAll(CSC369_WaitQueue* queue) {
 void
 Free_Main() {
   assert(Queue_IsEmpty(&ready_threads));
-  Queue_FreeAll(&zombie_threads); // TODO what if someone's waiting, can we exit?
+  Queue_FreeAll(&zombie_threads);
   for (int i = 0; i < CSC369_MAX_THREADS; i++)
     free(threads[i].join_threads);
 }
@@ -278,8 +283,7 @@ void ThreadStub(void (*f)(void *), void *arg) {
   Queue_FreeAll(&zombie_threads);
   CSC369_InterruptsEnable();
   f(arg);
-  CSC369_ThreadExit(3); // TODO code
-  //CSC369_ThreadExit(CSC369_EXIT_CODE_NORMAL);
+  CSC369_ThreadExit(CSC369_EXIT_CODE_NORMAL);
 }
 
 void*
@@ -366,7 +370,7 @@ CSC369_ThreadInit(void)
   int err = TCB_MainInit();
   if (err)
     return CSC369_ERROR_OTHER;
-  atexit(&At_Exit); // TODO do i need this
+  atexit(&At_Exit);
   return 0;
 }
 
@@ -394,8 +398,6 @@ CSC369_ThreadCreate(void (*f)(void*), void* arg)
 void
 CSC369_ThreadExit(int exit_code)
 {
-  // TODO what if blocked threads?
-  // TODO exit code fatal
   // TODO tid 0
   int prev_state = CSC369_InterruptsDisable();
   TCB_Zombify(running_thread, exit_code);
@@ -404,7 +406,7 @@ CSC369_ThreadExit(int exit_code)
   CSC369_ThreadYield();
   CSC369_InterruptsSet(prev_state);
 
-  exit(-1); // should not get here.
+  exit(CSC369_EXIT_CODE_FATAL); // should not get here.
 }
 
 Tid
@@ -417,8 +419,10 @@ CSC369_ThreadKill(Tid tid)
 
   int prev_state = CSC369_InterruptsDisable();
   TCB *tcb = &threads[tid]; 
-  if (tcb->state == CSC369_THREAD_FREE) // TODO other invalid states?
+  if (tcb->state == CSC369_THREAD_FREE)
     return CSC369_ERROR_SYS_THREAD;
+  else if (tcb->state == CSC369_THREAD_ZOMBIE)
+    return tcb->exit_code;
   Queue_Remove(&ready_threads, tid); // it might or might not be in ready queue
  
   TCB_Zombify(tid, CSC369_EXIT_CODE_KILL); 
