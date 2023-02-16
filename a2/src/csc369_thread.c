@@ -6,7 +6,7 @@
 #include <sys/time.h>
 #include <stdlib.h>
 
-#define DEBUG_USE_VALGRIND // uncomment to debug with valgrind // TODO uncomment
+//#define DEBUG_USE_VALGRIND // uncomment to debug with valgrind // TODO uncomment
 #ifdef DEBUG_USE_VALGRIND
 #include <valgrind/valgrind.h>
 #endif
@@ -218,11 +218,10 @@ TCB_Free(Tid tid)
   assert(TCB_CanFree(tid));
   TCB* tcb = &threads[tid]; 
   tcb->state = CSC369_THREAD_FREE;
-  tcb->context = (ucontext_t) {0}; // TODO correct?
-  tcb->exit_code = 30; // TODO fix
+  tcb->context = (ucontext_t) {0};
+  tcb->exit_code = 0; 
   Queue_Init(tcb->join_threads);
   free(tcb->stack);
-   // FIXME
 #ifdef DEBUG_USE_VALGRIND
   VALGRIND_STACK_DEREGISTER(tcb->stack_id);
 #endif
@@ -250,9 +249,6 @@ Free_Main() {
 
 void
 At_Exit() {
-  //if (running_thread)
-  //  CSC369_ThreadExit(0); // TODO exit code?
-  //else
   if (!running_thread)
     Free_Main();
 }
@@ -282,7 +278,8 @@ void ThreadStub(void (*f)(void *), void *arg) {
   Queue_FreeAll(&zombie_threads);
   CSC369_InterruptsEnable();
   f(arg);
-  CSC369_ThreadExit(CSC369_EXIT_CODE_NORMAL);
+  CSC369_ThreadExit(3); // TODO code
+  //CSC369_ThreadExit(CSC369_EXIT_CODE_NORMAL);
 }
 
 void*
@@ -369,7 +366,7 @@ CSC369_ThreadInit(void)
   int err = TCB_MainInit();
   if (err)
     return CSC369_ERROR_OTHER;
-  atexit(&At_Exit);
+  atexit(&At_Exit); // TODO do i need this
   return 0;
 }
 
