@@ -1,5 +1,10 @@
 function(add_check_exe check_exe_name check_exe_sources)
-    add_executable(${check_exe_name} ${check_exe_sources})
+    add_executable(
+        ${check_exe_name}
+        ${check_exe_sources}
+        check_thread_util.h
+        check_thread_util.c
+    )
 
     target_link_libraries(
         ${check_exe_name}
@@ -23,7 +28,6 @@ function(add_check_exe check_exe_name check_exe_sources)
             -Wall
     )
 endfunction()
-
 
 find_path(CHECK_INCLUDE_DIR
     NAMES
@@ -54,5 +58,11 @@ endif()
 set(THREADS_PREFER_PTHREAD_FLAG ON)
 find_package(Threads REQUIRED)
 
-add_check_exe(check_a2_thread_a1 check_a2_thread_a1.c)
-add_check_exe(check_a2_thread check_a2_thread.c)
+add_check_exe(check_a2_thread_student check_a2_thread.c)
+add_check_exe(check_a2_thread_subset_a1 check_thread_a1_subset.c)
+add_check_exe(check_a2_thread_mcheck_a1 check_thread_a1_subset.c)
+target_link_libraries(
+    check_a2_thread_mcheck_a1
+    PRIVATE
+        -lmcheck
+)
