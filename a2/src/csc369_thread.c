@@ -114,7 +114,7 @@ Queue_Enqueue(CSC369_WaitQueue* queue, Tid tid)
   assert(!CSC369_InterruptsAreEnabled());
   TCB* tcb = &threads[tid];
 
-  if (queue->tail == NULL)
+  if (queue->head == NULL)
     queue->head = tcb;
   else
     queue->tail->next_in_queue = tcb;
@@ -224,7 +224,8 @@ TCB_Free(Tid tid)
   TCB* tcb = &threads[tid]; 
   tcb->state = CSC369_THREAD_FREE;
   tcb->context = (ucontext_t) {0};
-  tcb->exit_code = 0; 
+  tcb->exit_code = 0;
+  tcb->next_in_queue = NULL; 
   Queue_Init(tcb->join_threads);
   free(tcb->stack);
 #ifdef DEBUG_USE_VALGRIND
@@ -237,8 +238,9 @@ Queue_FreeAll(CSC369_WaitQueue* queue) {
   int prev_state = CSC369_InterruptsDisable();
   for (TCB* cur = queue->head; cur != NULL; cur = cur->next_in_queue) {
     if (TCB_CanFree(cur->tid)) {
-      TCB_Free(cur->tid);
+      Tid tid = cur->tid;
       Queue_Remove(queue, cur->tid);
+      TCB_Free(tid);
     }
   }
   CSC369_InterruptsSet(prev_state);
