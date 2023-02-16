@@ -6,7 +6,7 @@
 #include <sys/time.h>
 #include <stdlib.h>
 
-//#define DEBUG_USE_VALGRIND // uncomment to debug with valgrind
+#define DEBUG_USE_VALGRIND // uncomment to debug with valgrind // TODO uncomment
 #ifdef DEBUG_USE_VALGRIND
 #include <valgrind/valgrind.h>
 #endif
@@ -37,6 +37,10 @@ typedef struct thread_control_block
 
   void* stack;
 
+  #ifdef DEBUG_USE_VALGRIND
+  int stack_id;
+  #endif
+
   /**
    * The thread context.
    */
@@ -65,7 +69,6 @@ typedef struct csc369_wait_queue_t
   TCB* head;
   TCB* tail;
 } CSC369_WaitQueue;
-// TODO implement as linked list.
 //**************************************************************************************************
 // Private Global Variables (Library State)
 //**************************************************************************************************
@@ -106,10 +109,13 @@ Queue_Enqueue(CSC369_WaitQueue* queue, Tid tid)
 {
   assert(!CSC369_InterruptsAreEnabled());
   TCB* tcb = &threads[tid];
-  tcb->next_in_queue = queue->head;
-  queue->head = tcb;
+
   if (queue->tail == NULL)
-    queue->tail = tcb;
+    queue->head = tcb;
+  else
+    queue->tail->next_in_queue = tcb;
+  queue->tail = tcb;
+  tcb->next_in_queue = NULL;
 }
 
 /**
@@ -208,10 +214,6 @@ TCB_CanFree(Tid tid) {
 void
 TCB_Free(Tid tid)
 {
-  // FIXME
-#ifdef DEBUG_USE_VALGRIND
-  // VALGRIND_STACK_DEREGISTER(...);
-#endif
   assert(!CSC369_InterruptsAreEnabled());
   assert(TCB_CanFree(tid));
   TCB* tcb = &threads[tid]; 
@@ -220,6 +222,10 @@ TCB_Free(Tid tid)
   tcb->exit_code = 30; // TODO fix
   Queue_Init(tcb->join_threads);
   free(tcb->stack);
+   // FIXME
+#ifdef DEBUG_USE_VALGRIND
+  VALGRIND_STACK_DEREGISTER(tcb->stack_id);
+#endif
 }
 
 void
@@ -232,6 +238,23 @@ Queue_FreeAll(CSC369_WaitQueue* queue) {
     }
   }
   CSC369_InterruptsSet(prev_state);
+}
+
+void
+Free_Main() {
+  assert(Queue_IsEmpty(&ready_threads));
+  Queue_FreeAll(&zombie_threads); // TODO what if someone's waiting, can we exit?
+  for (int i = 0; i < CSC369_MAX_THREADS; i++)
+    free(threads[i].join_threads);
+}
+
+void
+At_Exit() {
+  //if (running_thread)
+  //  CSC369_ThreadExit(0); // TODO exit code?
+  //else
+  if (!running_thread)
+    Free_Main();
 }
 
 void
@@ -262,6 +285,12 @@ void ThreadStub(void (*f)(void *), void *arg) {
   CSC369_ThreadExit(CSC369_EXIT_CODE_NORMAL);
 }
 
+void*
+Bit_Align(void* stack) {
+  long top = (long) (stack + CSC369_THREAD_STACK_SIZE + 15);
+  return (void*) (top - ((top - 8) % 16));
+}
+
 /**
  * @return 0 on success, -1 on failure.
  */
@@ -274,9 +303,7 @@ Context_Create(ucontext_t* context, void (*f)(void*), void* arg, void* stack) {
   context->uc_mcontext.gregs[REG_RIP] = (greg_t) &ThreadStub;
   context->uc_mcontext.gregs[REG_RDI] = (greg_t) f;
   context->uc_mcontext.gregs[REG_RSI] = (greg_t) arg;
-
-  context->uc_mcontext.gregs[REG_RSP] = (greg_t) stack + CSC369_THREAD_STACK_SIZE + 15;
-  context->uc_mcontext.gregs[REG_RSP] -= (context->uc_mcontext.gregs[REG_RSP] - 8) % 16;
+  context->uc_mcontext.gregs[REG_RSP] = (greg_t) Bit_Align(stack);
   return 0;
 }
 
@@ -293,6 +320,10 @@ TCB_Create(Tid tid, void (*f)(void*), void* arg) {
   tcb->stack = malloc(CSC369_THREAD_STACK_SIZE + 16);
   if (tcb->stack == NULL)
     return CSC369_ERROR_SYS_MEM;
+
+#ifdef DEBUG_USE_VALGRIND
+  tcb->stack_id = VALGRIND_STACK_REGISTER(Bit_Align(tcb->stack), Bit_Align(tcb->stack) - CSC369_THREAD_STACK_SIZE);
+#endif
 
   int err = Context_Create(&tcb->context, f, arg, tcb->stack);
   if (err)
@@ -338,6 +369,7 @@ CSC369_ThreadInit(void)
   int err = TCB_MainInit();
   if (err)
     return CSC369_ERROR_OTHER;
+  atexit(&At_Exit);
   return 0;
 }
 
@@ -393,8 +425,7 @@ CSC369_ThreadKill(Tid tid)
   Queue_Remove(&ready_threads, tid); // it might or might not be in ready queue
  
   TCB_Zombify(tid, CSC369_EXIT_CODE_KILL); 
-  if (TCB_CanFree(tid))
-    TCB_Free(tid);
+  Queue_FreeAll(&zombie_threads);
   CSC369_InterruptsSet(prev_state);
   return tid;
 }
@@ -561,8 +592,7 @@ CSC369_ThreadJoin(Tid tid, int* exit_code)
   assert(ret >= 0);
   *exit_code = tcb->exit_code;
   tcb->join_threads_num--;
-  if (TCB_CanFree(tcb->tid))
-    TCB_Free(tcb->tid);
+  Queue_FreeAll(&zombie_threads);
   CSC369_InterruptsSet(prev_state);
   return tid;
 }
