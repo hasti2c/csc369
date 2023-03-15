@@ -30,6 +30,35 @@ size_t ref_count = 0;
 size_t evict_clean_count = 0;
 size_t evict_dirty_count = 0;
 
+unsigned int
+pdpt_from_frame(unsigned int frame)
+{
+  return frame >> (PDPT_SHIFT - PT_SHIFT);
+}
+
+unsigned int
+pd_from_frame(unsigned int frame)
+{
+  return (frame >> (PD_SHIFT - PT_SHIFT)) & PD_MASK;
+}
+
+unsigned int
+pt_from_frame(unsigned int frame)
+{
+  return frame & PT_MASK;
+}
+
+
+// Evicts frame from page table.
+static int
+evict_frame(unsigned int frame) {
+  pd_t pd = pdpt.pdps[pdpt_from_frame(frame)];
+  assert(pd != 0);
+  pt_t pt = pd[pd_from_frame(frame)];
+  // TODO
+  return -1;
+}
+
 /*
  * Allocates a frame to be used for the virtual page represented by p.
  * If all frames are in use, calls the replacement algorithm's evict_func to
@@ -59,6 +88,9 @@ allocate_frame(pt_entry_t* pte)
     // Write victim page to swap, if needed, and update page table
 
     // IMPLEMENTATION NEEDED
+    // TODO: swap 
+
+    evict_frame(frame);
   }
 
   // Record information for virtual page that will now be stored in frame
@@ -82,7 +114,9 @@ allocate_frame(pt_entry_t* pte)
  */
 void
 init_pagetable(void)
-{}
+{
+  // TODO
+}
 
 /*
  * Initializes the content of a (simulated) physical memory frame when it

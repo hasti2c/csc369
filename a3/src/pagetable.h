@@ -39,23 +39,46 @@
 
 // These defines allow us to take advantage of the compiler's typechecking
 
+// Page directory pointer table (top-level)
+typedef struct
+{
+  pdpt_entry_t pdps[PTRS_PER_PDPT];
+} pdpt_t;
+
 // Page directory pointer table entry (top-level)
 typedef struct
 {
   uintptr_t pdp;
+  uint8_t flags;
 } pdpt_entry_t;
+
+// Page directory table (2nd-level)
+typedef struct
+{
+  pd_entry_t pds[PTRS_PER_PD];
+} pd_t;
 
 // Page directory entry (2nd-level)
 typedef struct
 {
   uintptr_t pde;
+  uint8_t flags;
 } pd_entry_t;
+
+// Page table (3rd-level)
+typedef struct
+{
+  pt_entry_t pts[PTRS_PER_PT];
+} pt_t;
 
 // Page table entry (3rd-level)
 typedef struct pt_entry_s
 {
   unsigned int frame; // if valid bit == 1, physical frame holding vpage
   off_t swap_offset;  // offset in swap file of vpage, if any
+  uint8_t flags;
 } pt_entry_t;
+
+pdpt_t pdpt; // main page table (pdpt)
 
 #endif /* CSC369_PAGETABLE_H */
