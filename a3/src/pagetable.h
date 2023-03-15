@@ -21,6 +21,7 @@
 #define PAGE_DIRTY 0x2  // Dirty bit in pte, set if page has been modified
 #define PAGE_REF 0x4    // Reference bit in pte, set if page has been referenced
 #define PAGE_ONSWAP 0x8 // Set if page has been evicted to swap
+#define PAGE_MAX 0xe    // 1111 in binary. Used for bitwise operations.
 
 #define PT_SHIFT 12   // Leaves top 36 bits of vaddr
 #define PD_SHIFT 24   // Leaves top 24 bits of vaddr
@@ -43,32 +44,35 @@
 typedef struct
 {
   pdpt_entry_t pdps[PTRS_PER_PDPT];
+  int16_t valid_cnt;
 } pdpt_t;
 
 // Page directory pointer table entry (top-level)
 typedef struct
 {
   uintptr_t pdp;
-  uint8_t flags;
+  uint8_t flag; // valid bit
 } pdpt_entry_t;
 
 // Page directory table (2nd-level)
 typedef struct
 {
   pd_entry_t pds[PTRS_PER_PD];
+  int16_t valid_cnt;
 } pd_t;
 
 // Page directory entry (2nd-level)
 typedef struct
 {
   uintptr_t pde;
-  uint8_t flags;
+  uint8_t flag; // valid bit
 } pd_entry_t;
 
 // Page table (3rd-level)
 typedef struct
 {
   pt_entry_t pts[PTRS_PER_PT];
+  int16_t valid_cnt;
 } pt_t;
 
 // Page table entry (3rd-level)

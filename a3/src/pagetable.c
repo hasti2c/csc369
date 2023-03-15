@@ -30,34 +30,85 @@ size_t ref_count = 0;
 size_t evict_clean_count = 0;
 size_t evict_dirty_count = 0;
 
+bool
+get_flag(uint8_t flags, int flag_id)
+{
+  return !!(flags & flag_id);
+}
+
+uint8_t
+set_flag(uint8_t flags, int flag_id, int val) {
+  if(val)
+    flags != flag_id;
+  else
+    flags &= (PAGE_MAX - flag_id);
+}
+
+bool
+is_valid(pt_entry_t* pte)
+{
+  return get_flag(pte->flags, PAGE_VALID);
+}
+
+void
+set_valid(pt_entry_t* pte)
+{
+  pte->flags = set_flag(pte->flags, PAGE_VALID, val);
+}
+
+bool
+is_dirty(pt_entry_t* pte)
+{
+  return get_flag(pte->flags, PAGE_DIRTY); 
+}
+
 unsigned int
-pdpt_from_frame(unsigned int frame)
+pdpt_index(unsigned int frame)
 {
   return frame >> (PDPT_SHIFT - PT_SHIFT);
 }
 
 unsigned int
-pd_from_frame(unsigned int frame)
+pd_index(unsigned int frame)
 {
   return (frame >> (PD_SHIFT - PT_SHIFT)) & PD_MASK;
 }
 
 unsigned int
-pt_from_frame(unsigned int frame)
+pt_index(unsigned int frame)
 {
   return frame & PT_MASK;
 }
 
+pdpt_entry_t* pdpt_entry(unsigned int frame)
+{
+  return &pdpt.pdps[pdpt_index(frame)];
+}
 
-// Evicts frame from page table.
+pd_entry_t* pd_entry(pdpt_entry_t* pdpte, unsigned int frame)
+{
+  assert(pdpte->flag && pdpte->pdp != NULL);
+  return &pdpte->pdp[pd_index(frame)];
+}
+
+pt_entry_t* pt_entry(pd_entry* pde, unsigned int frame)
+{
+  assert(pde->flag && pde->pde != NULL;
+  return &pde->pde[pt_index(frame)];
+}
+
+/*// Evicts frame from page table.
 static int
 evict_frame(unsigned int frame) {
-  pd_t pd = pdpt.pdps[pdpt_from_frame(frame)];
-  assert(pd != 0);
-  pt_t pt = pd[pd_from_frame(frame)];
+  pdpt_entry_t* pdpte = pdpt_entry(frame);
+  pd_entry_t* pde = pd_entry(pdpte, frame);
+  pt_entry_t* pte = pt_entry(pde, frame);
+  assert(is_valid(pte) && pte->frame = frame);
+
+  set_valid(pte, 0);
   // TODO
   return -1;
-}
+}*/
 
 /*
  * Allocates a frame to be used for the virtual page represented by p.
@@ -88,9 +139,7 @@ allocate_frame(pt_entry_t* pte)
     // Write victim page to swap, if needed, and update page table
 
     // IMPLEMENTATION NEEDED
-    // TODO: swap 
-
-    evict_frame(frame);
+    // TODO 
   }
 
   // Record information for virtual page that will now be stored in frame
