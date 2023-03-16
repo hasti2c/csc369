@@ -12,7 +12,7 @@ struct frame *frame_head; // Head = Most Recently Ref'ed
 int
 lru_evict(void)
 {
-  return frame_head - coremap;
+  return frame_head->prev - coremap;
 }
 
 /* This function is called on each access to a page to update any information
