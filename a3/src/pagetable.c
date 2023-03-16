@@ -62,6 +62,18 @@ is_dirty(pt_entry_t* pte)
   return get_flag(pte->flags, PAGE_DIRTY); 
 }
 
+bool
+get_referenced(pt_entry_t* pte)
+{
+  return get_flag(pte->flags, PAGE_REF);
+}
+
+void
+set_referenced(pt_entry_t* pte, bool val)
+{
+  set_flag(&pte->flags, PAGE_REF, val);
+}
+
 pd_t*
 get_pd(vaddr_t vaddr)
 {
@@ -134,7 +146,7 @@ allocate_frame(pt_entry_t* pte)
     if (get_flag(victim->flags, PAGE_DIRTY)) {
       evict_dirty_count++;
       if (get_flag(victim->flags, PAGE_ONSWAP))
-        victim->swap_offset = swap_pageout(frame, victim->swap_offset); // TODO make sure to initialize to INVALID_SWAP
+        victim->swap_offset = swap_pageout(frame, victim->swap_offset);
       else
         victim->swap_offset = swap_pageout(frame, INVALID_SWAP);      
   
@@ -172,7 +184,6 @@ allocate_frame(pt_entry_t* pte)
 void
 init_pagetable(void)
 {
-  // TODO
   memset(&pdpt, 0, sizeof(pdpt_t));
 }
 
