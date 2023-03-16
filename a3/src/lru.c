@@ -1,7 +1,6 @@
 #include <assert.h>
 
 #include "pagetable_generic.h"
-#include "sim.h"
 
 struct frame *frame_head; // Head = Most Recently Ref'ed
 
@@ -9,6 +8,7 @@ struct frame *frame_head; // Head = Most Recently Ref'ed
  * Returns the page frame number (which is also the index in the coremap)
  * for the page that is to be evicted.
  */
+
 int
 lru_evict(void)
 {
@@ -36,8 +36,7 @@ lru_ref(int frame)
 /* Initialize any data structures needed for this replacement algorithm. */
 void
 lru_init(void)
-{
-}
+{}
 
 /* Cleanup any data structures created in lru_init(). */
 void
