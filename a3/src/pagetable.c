@@ -133,7 +133,11 @@ allocate_frame(pt_entry_t* pte)
     // IMPLEMENTATION NEEDED
     if (get_flag(victim->flags, PAGE_DIRTY)) {
       evict_dirty_count++;
-      victim->swap_offset = swap_pageout(frame, victim->swap_offset); // TODO make sure to initialize to INVALID_SWAP
+      if (get_flag(victim->flags, PAGE_ONSWAP))
+        victim->swap_offset = swap_pageout(frame, victim->swap_offset); // TODO make sure to initialize to INVALID_SWAP
+      else
+        victim->swap_offset = swap_pageout(frame, INVALID_SWAP);      
+  
       if (victim->swap_offset == INVALID_SWAP)
         exit(-1);
     } else {
