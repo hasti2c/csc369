@@ -84,7 +84,6 @@ get_pd(vaddr_t vaddr)
     pdp->pdp = (uintptr_t) pd;
     //printf("Malloc: %p\n", pd);
     memset(pd, 0, sizeof(pd_t));
-    pdpt.in_use_cnt++;
   }
   return (pd_t*) pdp->pdp;
 }
@@ -100,7 +99,6 @@ get_pt(vaddr_t vaddr)
     ptp->pde = (uintptr_t) pt;
     //printf("Malloc: %p\n", pt);
     memset(pt, 0, sizeof(pt_t));
-    pt->in_use_cnt++;
   }
   return (pt_t*) ptp->pde;
 }

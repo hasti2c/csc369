@@ -64,21 +64,18 @@ typedef struct pt_entry_s
 typedef struct
 {
   pdpt_entry_t pds[PTRS_PER_PDPT];
-  int16_t in_use_cnt;
 } pdpt_t;
 
 // Page directory table (2nd-level)
 typedef struct
 {
   pd_entry_t pts[PTRS_PER_PD];
-  int16_t in_use_cnt;
 } pd_t;
 
 // Page table (3rd-level)
 typedef struct
 {
   pt_entry_t pages[PTRS_PER_PT];
-  int16_t in_use_cnt;
 } pt_t;
 
 pdpt_t pdpt; // main page table (pdpt)
