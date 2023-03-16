@@ -39,9 +39,10 @@ get_flag(uint8_t flags, int flag_id)
 uint8_t
 set_flag(uint8_t flags, int flag_id, int val) {
   if(val)
-    flags != flag_id;
+    flags |= flag_id;
   else
     flags &= (PAGE_MAX - flag_id);
+  return flags;
 }
 
 bool
@@ -51,7 +52,7 @@ is_valid(pt_entry_t* pte)
 }
 
 void
-set_valid(pt_entry_t* pte)
+set_valid(pt_entry_t* pte, int val)
 {
   pte->flags = set_flag(pte->flags, PAGE_VALID, val);
 }
@@ -62,53 +63,40 @@ is_dirty(pt_entry_t* pte)
   return get_flag(pte->flags, PAGE_DIRTY); 
 }
 
-unsigned int
-pdpt_index(unsigned int frame)
+pd_t*
+get_pd(vaddr_t vaddr)
 {
-  return frame >> (PDPT_SHIFT - PT_SHIFT);
+  unsigned int index = vaddr >> PDPT_SHIFT;
+  pd_t* pd = (pd_t*) pdpt.pds[index].pdp;
+  if (pd == NULL) {
+    pd = malloc(sizeof(pd_t));
+    memset(pd, 0, sizeof(pd_t));
+    pdpt.in_use_cnt++;
+  }
+  return pd;
 }
 
-unsigned int
-pd_index(unsigned int frame)
+pt_t*
+get_pt(vaddr_t vaddr)
 {
-  return (frame >> (PD_SHIFT - PT_SHIFT)) & PD_MASK;
+  unsigned int index = (vaddr >> PD_SHIFT) & PD_MASK;
+  pd_t* pd = get_pd(vaddr);
+  pt_t* pt = (pt_t*) pd->pts[index].pde;
+  if (pt == NULL) {
+    pt = malloc(sizeof(pt_t));
+    memset(pt, 0, sizeof(pt_t));
+    pd->in_use_cnt++;
+  }
+  return pt;
 }
 
-unsigned int
-pt_index(unsigned int frame)
+pt_entry_t*
+get_page(vaddr_t vaddr)
 {
-  return frame & PT_MASK;
+  unsigned int index = (vaddr >> PT_SHIFT) & PT_MASK;
+  pt_t* pt = get_pt(vaddr);
+  return &pt->pages[index];
 }
-
-pdpt_entry_t* pdpt_entry(unsigned int frame)
-{
-  return &pdpt.pdps[pdpt_index(frame)];
-}
-
-pd_entry_t* pd_entry(pdpt_entry_t* pdpte, unsigned int frame)
-{
-  assert(pdpte->flag && pdpte->pdp != NULL);
-  return &pdpte->pdp[pd_index(frame)];
-}
-
-pt_entry_t* pt_entry(pd_entry* pde, unsigned int frame)
-{
-  assert(pde->flag && pde->pde != NULL;
-  return &pde->pde[pt_index(frame)];
-}
-
-/*// Evicts frame from page table.
-static int
-evict_frame(unsigned int frame) {
-  pdpt_entry_t* pdpte = pdpt_entry(frame);
-  pd_entry_t* pde = pd_entry(pdpte, frame);
-  pt_entry_t* pte = pt_entry(pde, frame);
-  assert(is_valid(pte) && pte->frame = frame);
-
-  set_valid(pte, 0);
-  // TODO
-  return -1;
-}*/
 
 /*
  * Allocates a frame to be used for the virtual page represented by p.
@@ -134,12 +122,25 @@ allocate_frame(pt_entry_t* pte)
     // Call replacement algorithm's evict function to select victim
     frame = evict_func();
     assert(frame != -1);
+    pt_entry_t* victim = coremap[frame].pte;
 
     // All frames were in use, so victim frame must hold some page
     // Write victim page to swap, if needed, and update page table
 
     // IMPLEMENTATION NEEDED
-    // TODO 
+    if (get_flag(victim->flags, PAGE_DIRTY)) {
+      evict_dirty_count++;
+      victim->swap_offset = swap_pageout(frame, victim->swap_offset); // TODO make sure to initialize to INVALID_SWAP
+      if (victim->swap_offset == INVALID_SWAP)
+        exit(-1);
+    } else {
+      evict_clean_count++;
+    }
+
+    set_flag(victim->flags, PAGE_VALID, 0);
+    set_flag(victim->flags, PAGE_ONSWAP, 1);
+    set_flag(victim->flags, PAGE_DIRTY, 0);
+    set_flag(victim->flags, PAGE_REF, 0);
   }
 
   // Record information for virtual page that will now be stored in frame
@@ -211,15 +212,36 @@ find_physpage(vaddr_t vaddr, char type)
 
   // Use your page table to find the page table entry (pte) for the
   // requested vaddr.
+  pt_entry_t* pte = get_page(vaddr);
 
   // Check if pte is valid or not, on swap or not, and handle appropriately.
   // You can use the allocate_frame() and init_frame() functions here,
   // as needed.
 
+  if (!get_flag(pte->flags, PAGE_VALID)) {
+    miss_count++;
+    pte->frame = allocate_frame(pte);
+    if (!get_flag(pte->flags, PAGE_ONSWAP)) { // uninitialized
+      init_frame(pte->frame);
+      set_flag(pte->flags, PAGE_DIRTY, 1);
+    } else { // on swap
+      int err = swap_pagein(pte->frame, pte->swap_offset);
+      if (err)
+        exit(-1);
+    }
+  } else {
+    hit_count++;
+  }
+
   // Make sure that pte is marked valid and referenced. Also mark it
   // dirty if the access type indicates that the page will be written to.
   // (Note that a page should be marked DIRTY when it is first accessed,
   // even if the type of first access is a read (Load or Instruction type).
+  set_flag(pte->flags, PAGE_VALID, 1);
+  set_flag(pte->flags, PAGE_REF, 1);
+  if (type == 'S' || type == 'M')
+    set_flag(pte->flags, PAGE_DIRTY, 1); 
+  ref_count++;
 
   // Call replacement algorithm's ref_func for this page.
   assert(frame != -1);
@@ -231,8 +253,41 @@ find_physpage(vaddr_t vaddr, char type)
 
 void
 print_pagetable(void)
-{}
+{
+  for (int i = 0; i < PTRS_PER_PDPT; i++) {
+    pd_t* pd = (pd_t*) &pdpt.pds[i].pdp;
+    if (pd == NULL)
+      continue;
+    for (int j = 0; j < PTRS_PER_PD; j++) {
+      pt_t* pt = (pt_t*) &pd->pts[j].pde;
+      if (pt == NULL)
+        continue;
+      for (int k = 0; k < PTRS_PER_PT; k++) {
+        pt_entry_t* pte = &pt->pages[k];
+        if (get_flag(pte->flags, PAGE_VALID))
+          printf("(%d-%d-%d) Status: Valid [Frame: %d]\n", i, j, k, pte->frame);
+        else if (get_flag(pte->flags, PAGE_ONSWAP))
+          printf("(%d-%d-%d) Status: On Swap [Offset: %ld]\n", i, j, k, pte->swap_offset);
+      }
+      printf("\n");
+    }
+    printf("\n");
+  }
+}
 
 void
 free_pagetable(void)
-{}
+{
+  for (int i = 0; i < PTRS_PER_PDPT; i++) {
+    pd_t* pd = (pd_t*) &pdpt.pds[i].pdp;
+    if (pd == NULL)
+      continue;
+    for (int j = 0; j < PTRS_PER_PD; j++) {
+      pt_t* pt = (pt_t*) &pd->pts[j].pde;
+      if (pt == NULL)
+        continue;
+      free(pt);
+    }
+    free(pd);
+  }
+}

@@ -40,40 +40,17 @@
 
 // These defines allow us to take advantage of the compiler's typechecking
 
-// Page directory pointer table (top-level)
-typedef struct
-{
-  pdpt_entry_t pdps[PTRS_PER_PDPT];
-  int16_t valid_cnt;
-} pdpt_t;
-
 // Page directory pointer table entry (top-level)
 typedef struct
 {
-  uintptr_t pdp;
-  uint8_t flag; // valid bit
+  uintptr_t pdp; // NULL IF invalid
 } pdpt_entry_t;
-
-// Page directory table (2nd-level)
-typedef struct
-{
-  pd_entry_t pds[PTRS_PER_PD];
-  int16_t valid_cnt;
-} pd_t;
 
 // Page directory entry (2nd-level)
 typedef struct
 {
-  uintptr_t pde;
-  uint8_t flag; // valid bit
+  uintptr_t pde; // NULL if invalid.
 } pd_entry_t;
-
-// Page table (3rd-level)
-typedef struct
-{
-  pt_entry_t pts[PTRS_PER_PT];
-  int16_t valid_cnt;
-} pt_t;
 
 // Page table entry (3rd-level)
 typedef struct pt_entry_s
@@ -82,6 +59,27 @@ typedef struct pt_entry_s
   off_t swap_offset;  // offset in swap file of vpage, if any
   uint8_t flags;
 } pt_entry_t;
+
+// Page directory pointer table (top-level)
+typedef struct
+{
+  pdpt_entry_t pds[PTRS_PER_PDPT];
+  int16_t in_use_cnt;
+} pdpt_t;
+
+// Page directory table (2nd-level)
+typedef struct
+{
+  pd_entry_t pts[PTRS_PER_PD];
+  int16_t in_use_cnt;
+} pd_t;
+
+// Page table (3rd-level)
+typedef struct
+{
+  pt_entry_t pages[PTRS_PER_PT];
+  int16_t in_use_cnt;
+} pt_t;
 
 pdpt_t pdpt; // main page table (pdpt)
 
