@@ -36,13 +36,12 @@ get_flag(uint8_t flags, int flag_id)
   return !!(flags & flag_id);
 }
 
-uint8_t
-set_flag(uint8_t flags, int flag_id, int val) {
+void
+set_flag(uint8_t *flags, int flag_id, int val) {
   if(val)
-    flags |= flag_id;
+    *flags = *flags | flag_id;
   else
-    flags &= (PAGE_MAX - flag_id);
-  return flags;
+    *flags = *flags &(PAGE_MAX - flag_id);
 }
 
 bool
@@ -54,7 +53,7 @@ is_valid(pt_entry_t* pte)
 void
 set_valid(pt_entry_t* pte, int val)
 {
-  pte->flags = set_flag(pte->flags, PAGE_VALID, val);
+  set_flag(&pte->flags, PAGE_VALID, val);
 }
 
 bool
@@ -67,13 +66,15 @@ pd_t*
 get_pd(vaddr_t vaddr)
 {
   unsigned int index = vaddr >> PDPT_SHIFT;
-  pd_t* pd = (pd_t*) pdpt.pds[index].pdp;
-  if (pd == NULL) {
-    pd = malloc(sizeof(pd_t));
+  pdpt_entry_t* pdp = &pdpt.pds[index];
+  if (!pdp->pdp) {
+    pd_t *pd = malloc(sizeof(pd_t));
+    pdp->pdp = (uintptr_t) pd;
+    //printf("Malloc: %p\n", pd);
     memset(pd, 0, sizeof(pd_t));
     pdpt.in_use_cnt++;
   }
-  return pd;
+  return (pd_t*) pdp->pdp;
 }
 
 pt_t*
@@ -81,13 +82,15 @@ get_pt(vaddr_t vaddr)
 {
   unsigned int index = (vaddr >> PD_SHIFT) & PD_MASK;
   pd_t* pd = get_pd(vaddr);
-  pt_t* pt = (pt_t*) pd->pts[index].pde;
-  if (pt == NULL) {
-    pt = malloc(sizeof(pt_t));
+  pd_entry_t* ptp = (pd_entry_t*) &pd->pts[index];
+  if (!ptp->pde) {
+    pt_t *pt = malloc(sizeof(pt_t));
+    ptp->pde = (uintptr_t) pt;
+    //printf("Malloc: %p\n", pt);
     memset(pt, 0, sizeof(pt_t));
-    pd->in_use_cnt++;
+    pt->in_use_cnt++;
   }
-  return pt;
+  return (pt_t*) ptp->pde;
 }
 
 pt_entry_t*
@@ -137,10 +140,10 @@ allocate_frame(pt_entry_t* pte)
       evict_clean_count++;
     }
 
-    set_flag(victim->flags, PAGE_VALID, 0);
-    set_flag(victim->flags, PAGE_ONSWAP, 1);
-    set_flag(victim->flags, PAGE_DIRTY, 0);
-    set_flag(victim->flags, PAGE_REF, 0);
+    set_flag(&victim->flags, PAGE_VALID, 0);
+    set_flag(&victim->flags, PAGE_ONSWAP, 1);
+    set_flag(&victim->flags, PAGE_DIRTY, 0);
+    set_flag(&victim->flags, PAGE_REF, 0);
   }
 
   // Record information for virtual page that will now be stored in frame
@@ -166,6 +169,7 @@ void
 init_pagetable(void)
 {
   // TODO
+  memset(&pdpt, 0, sizeof(pdpt_t));
 }
 
 /*
@@ -223,7 +227,7 @@ find_physpage(vaddr_t vaddr, char type)
     pte->frame = allocate_frame(pte);
     if (!get_flag(pte->flags, PAGE_ONSWAP)) { // uninitialized
       init_frame(pte->frame);
-      set_flag(pte->flags, PAGE_DIRTY, 1);
+      set_flag(&pte->flags, PAGE_DIRTY, 1);
     } else { // on swap
       int err = swap_pagein(pte->frame, pte->swap_offset);
       if (err)
@@ -232,15 +236,16 @@ find_physpage(vaddr_t vaddr, char type)
   } else {
     hit_count++;
   }
+  frame = pte->frame;
 
   // Make sure that pte is marked valid and referenced. Also mark it
   // dirty if the access type indicates that the page will be written to.
   // (Note that a page should be marked DIRTY when it is first accessed,
   // even if the type of first access is a read (Load or Instruction type).
-  set_flag(pte->flags, PAGE_VALID, 1);
-  set_flag(pte->flags, PAGE_REF, 1);
+  set_flag(&pte->flags, PAGE_VALID, 1);
+  set_flag(&pte->flags, PAGE_REF, 1);
   if (type == 'S' || type == 'M')
-    set_flag(pte->flags, PAGE_DIRTY, 1); 
+    set_flag(&pte->flags, PAGE_DIRTY, 1); 
   ref_count++;
 
   // Call replacement algorithm's ref_func for this page.
@@ -255,19 +260,25 @@ void
 print_pagetable(void)
 {
   for (int i = 0; i < PTRS_PER_PDPT; i++) {
-    pd_t* pd = (pd_t*) &pdpt.pds[i].pdp;
-    if (pd == NULL)
+    pd_t* pd = (pd_t*) pdpt.pds[i].pdp;
+    if (pd == NULL) {
+      // printf("(%x) Not In Use\n", i);
       continue;
+    }
     for (int j = 0; j < PTRS_PER_PD; j++) {
-      pt_t* pt = (pt_t*) &pd->pts[j].pde;
-      if (pt == NULL)
+      pt_t* pt = (pt_t*) pd->pts[j].pde;
+      if (pt == NULL) {
+        // printf("(%x-%x Not In Use\n", i, j);
         continue;
+      }
       for (int k = 0; k < PTRS_PER_PT; k++) {
         pt_entry_t* pte = &pt->pages[k];
         if (get_flag(pte->flags, PAGE_VALID))
-          printf("(%d-%d-%d) Status: Valid [Frame: %d]\n", i, j, k, pte->frame);
+          printf("(%x-%x-%x) Valid [Frame: %d]\n", i, j, k, pte->frame);
         else if (get_flag(pte->flags, PAGE_ONSWAP))
-          printf("(%d-%d-%d) Status: On Swap [Offset: %ld]\n", i, j, k, pte->swap_offset);
+          printf("(%x-%x-%x) On Swap [Offset: %ld]\n", i, j, k, pte->swap_offset);
+        // else
+        // printf("(%d-%d-%d) Not In Use\n", i, j, k);
       }
       printf("\n");
     }
@@ -279,15 +290,17 @@ void
 free_pagetable(void)
 {
   for (int i = 0; i < PTRS_PER_PDPT; i++) {
-    pd_t* pd = (pd_t*) &pdpt.pds[i].pdp;
-    if (pd == NULL)
-      continue;
-    for (int j = 0; j < PTRS_PER_PD; j++) {
-      pt_t* pt = (pt_t*) &pd->pts[j].pde;
-      if (pt == NULL)
-        continue;
-      free(pt);
+    pd_t* pd = (pd_t*) pdpt.pds[i].pdp;
+    if (pd != NULL) {
+      for (int j = 0; j < PTRS_PER_PD; j++) {
+        pt_t* pt = (pt_t*) pd->pts[j].pde;
+        if (pt != NULL) {
+          //printf("Free: %d %p\n", j, pt);
+          free(pt);
+        }
+      }
+      //printf("Free: %d %p\n", i, pd);
+      free(pd);
     }
-    free(pd);
   }
 }

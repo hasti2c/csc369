@@ -43,13 +43,13 @@
 // Page directory pointer table entry (top-level)
 typedef struct
 {
-  uintptr_t pdp; // NULL IF invalid
+  uintptr_t pdp; // NULL if invalid. Considered pd_t*.
 } pdpt_entry_t;
 
 // Page directory entry (2nd-level)
 typedef struct
 {
-  uintptr_t pde; // NULL if invalid.
+  uintptr_t pde; // NULL if invalid. Considered pt_t*.
 } pd_entry_t;
 
 // Page table entry (3rd-level)
