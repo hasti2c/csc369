@@ -12,8 +12,11 @@ size_t clock_hand = 0;
 int
 clock_evict(void)
 {
-  for (struct frame *frame = &coremap[clock_hand]; frame->pte != NULL && get_referenced(frame->pte); clock_hand = (clock_hand + 1) % memsize) {
+  struct frame *frame = &coremap[clock_hand];
+  while (frame->pte != NULL && get_referenced(frame->pte)) {
     set_referenced(frame->pte, false);
+    clock_hand = (clock_hand + 1) % memsize;
+    frame = &coremap[clock_hand];
   }
   int ret = (int) clock_hand;
   clock_hand = (clock_hand + 1) % memsize;

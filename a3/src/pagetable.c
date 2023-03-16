@@ -38,10 +38,10 @@ get_flag(uint8_t flags, int flag_id)
 
 void
 set_flag(uint8_t *flags, int flag_id, int val) {
-  if(val)
+  if (val)
     *flags = *flags | flag_id;
   else
-    *flags = *flags &(PAGE_MAX - flag_id);
+    *flags = *flags & (PAGE_MAX - flag_id);
 }
 
 bool

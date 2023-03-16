@@ -8,7 +8,6 @@ struct frame *frame_head; // Head = Most Recently Ref'ed
  * Returns the page frame number (which is also the index in the coremap)
  * for the page that is to be evicted.
  */
-
 int
 lru_evict(void)
 {

@@ -17,11 +17,11 @@
 // |------------|------------|------------|------------|
 //   PDPT index    PD index     PT index    page offset
 
-#define PAGE_VALID 0x1  // Valid bit in pdp or pde or pte, set if in memory
+#define PAGE_VALID 0x1  // Valid bit in pdp or pde or 108pte, set if in memory
 #define PAGE_DIRTY 0x2  // Dirty bit in pte, set if page has been modified
 #define PAGE_REF 0x4    // Reference bit in pte, set if page has been referenced
 #define PAGE_ONSWAP 0x8 // Set if page has been evicted to swap
-#define PAGE_MAX 0xe    // 1111 in binary. Used for bitwise operations.
+#define PAGE_MAX 0xf    // 1111 in binary. Used for bitwise operations.
 
 #define PT_SHIFT 12   // Leaves top 36 bits of vaddr
 #define PD_SHIFT 24   // Leaves top 24 bits of vaddr
