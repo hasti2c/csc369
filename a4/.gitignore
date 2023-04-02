@@ -1,0 +1,6 @@
+.hypothesis
+__pycache__
+cmake-build-*
+.idea
+.vscode
+*.disk
