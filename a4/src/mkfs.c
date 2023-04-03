@@ -203,6 +203,9 @@ mkfs(void* image, size_t size, mkfs_opts* opts)
   // 3. Allocate a data block for root directory; record it in root inode
   int err = bitmap_alloc(dbmap, nblks, &root_ino->i_direct[0]);
   assert(!err);
+  for (uint32_t i = 1; i < VSFS_NUM_DIRECT; i++)
+    root_ino->i_direct[i] = 0; // no block allocated
+  root_ino->i_indirect = 0;  // no block allocated
   root_entries = (vsfs_dentry*) (image + root_ino->i_direct[0] * VSFS_BLOCK_SIZE);
 
   // 4. Create '.' and '..' entries in root dir data block.

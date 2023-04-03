@@ -103,9 +103,9 @@ get_fs(void)
  * Returns 0 if successful, -ENOENT if no such dentry.
  */
 static int
-find_in_blk(const char* name, vsfs_ino_t* ino, vsfs_blk_t blk) {
+find_in_block(const char* name, vsfs_ino_t* ino, vsfs_blk_t blk) {
   fs_ctx *fs = get_fs();
-  vsfs_dentry* blk_ptr = (vsfs_dentry*) (fs->sb + blk * VSFS_BLOCK_SIZE);
+  vsfs_dentry* blk_ptr = (vsfs_dentry*) (fs->image + blk * VSFS_BLOCK_SIZE);
   for (uint32_t i = 0; i < VSFS_BLOCK_SIZE / sizeof(vsfs_dentry); i++) {
     if (strcmp(blk_ptr[i].name, name) == 0) {
       *ino = blk_ptr[i].ino;
@@ -113,51 +113,6 @@ find_in_blk(const char* name, vsfs_ino_t* ino, vsfs_blk_t blk) {
     }
   }
   return -ENOENT;
-}
-
-/**
- * Find dentry with name in dir.
- * Returns 0 if successful, -ENOENT if no such dentry.
- */
-static int
-find_in_dir(const char* name, vsfs_ino_t* ino, vsfs_ino_t dir) {
-  fs_ctx *fs = get_fs();
-  vsfs_inode* dir_ino = &fs->itable[dir];
-  for (uint32_t i = 0; i < VSFS_NUM_DIRECT; i++) {
-    if (dir_ino->i_direct[i] == 0)
-      continue;
-    int ret = find_in_blk(name, ino, dir_ino->i_direct[i]);
-    if (ret == 0)
-      return 0;
-  }
-  if (dir_ino->i_indirect == 0)
-    return -ENOENT;
-  return find_in_blk(name, ino, dir_ino->i_indirect);
-}
-
-/** 
- * Same as lookup but looks up relative path in dir.
- */
-static int
-path_lookup_in_dir(const char* path, vsfs_ino_t* ino, vsfs_ino_t dir) {
-  
-  char *slsh = strchr(path + 1, '/');
-  if (slsh == NULL) { // file
-    return find_in_dir(path + 1, ino, dir);
-  }
-  // directory
-  int child_len = slsh - (path + 1);
-  char* child_name = malloc(child_len + 1);
-  strncpy(child_name, path + 1, child_len);
-  child_name[child_len] = '\0';
-
-  vsfs_ino_t* child_ino = malloc(sizeof(vsfs_inode));
-  find_in_dir(child_name, child_ino, dir);
-  int ret = path_lookup_in_dir(slsh, ino, *child_ino);
-
-  free(child_ino);
-  free(child_name);
-  return ret;
 }
 
 /* Finds the inode number for the element at the end of the path
@@ -183,8 +138,17 @@ path_lookup(const char* path, vsfs_ino_t* ino)
     *ino = VSFS_ROOT_INO;
     return 0;
   }
-  
-  return path_lookup_in_dir(path, ino, VSFS_ROOT_INO);
+ 
+  // file (since no subdirectories)
+  fs_ctx* fs = get_fs();
+  vsfs_inode* root_ino = &fs->itable[VSFS_ROOT_INO];
+  for (uint32_t i = 0; i < VSFS_NUM_DIRECT; i++) {
+    if (root_ino->i_direct[i] != 0 && find_in_block(path + 1, ino, root_ino->i_direct[i]) == 0)
+      return 0;
+  }
+  if (root_ino->i_indirect != 0)
+    return find_in_block(path + 1, ino, root_ino->i_indirect);
+  return -ENOENT;
 }
 
 /**
@@ -273,6 +237,24 @@ vsfs_getattr(const char* path, struct stat* st)
 }
 
 /**
+ * Same as readdir but only on a block.
+ */
+static int
+vsfs_readblock(vsfs_blk_t blk,
+               void* buf,
+               fuse_fill_dir_t filler)
+{
+  fs_ctx *fs = get_fs();
+  vsfs_dentry* blk_ptr = (vsfs_dentry*) (fs->image + blk * VSFS_BLOCK_SIZE);
+  for (uint32_t i = 0; i < VSFS_BLOCK_SIZE / sizeof(vsfs_dentry); i++) {
+    if (blk_ptr[i].ino != VSFS_INO_MAX)
+      if (filler(buf, blk_ptr[i].name, NULL, 0))
+        return -ENOMEM;
+  }
+  return 0;
+}
+
+/**
  * Read a directory.
  *
  * Implements the readdir() system call. Should call filler(buf, name, NULL, 0)
@@ -302,19 +284,17 @@ vsfs_readdir(const char* path,
   (void)offset; // unused
   (void)fi;     // unused
   fs_ctx* fs = get_fs();
-
-  // NOTE: This is just a placeholder that allows the file system to be mounted
-  // without errors. You should remove this from your implementation.
-  if (strcmp(path, "/") == 0) {
-    filler(buf, ".", NULL, 0);
-    filler(buf, "..", NULL, 0);
-    return 0;
+  vsfs_ino_t* ino_ind = malloc(sizeof(vsfs_ino_t));
+  int err = path_lookup(path, ino_ind);
+  assert(!err);
+  vsfs_inode* ino = &fs->itable[*ino_ind];
+  for (uint32_t i = 0; i < VSFS_NUM_DIRECT; i++) {
+    if (ino->i_direct[i] != 0 && vsfs_readblock(ino->i_direct[i], buf, filler))
+      return -ENOMEM;
   }
-
-  // TODO: lookup the directory inode for given path and iterate through its
-  // directory entries
-  (void)fs;
-  return -ENOSYS;
+  if (ino->i_indirect != 0)
+    return vsfs_readblock(ino->i_indirect, buf, filler);
+  return 0;
 }
 
 /**

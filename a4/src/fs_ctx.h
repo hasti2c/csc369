@@ -43,7 +43,7 @@ typedef struct fs_ctx
   bitmap_t* dbmap;
   /** Pointer to the inode table in the mmap'd disk image */
   vsfs_inode* itable;
-
+  
   // TODO: other useful runtime state of the mounted file system should be
   //       cached here (NOT in global variables in vsfs.c)
 
