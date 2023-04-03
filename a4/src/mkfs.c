@@ -107,7 +107,7 @@ static bool
 vsfs_is_present(void* image)
 {
   // Check if the image already contains a valid vsfs superblock.
-  // This may be overly trusting. You can add additional sanity checks.
+  // This may be overly trusting. You can add additional sanity checks. TODO
 
   vsfs_superblock* sb = (vsfs_superblock*)image;
   if (sb->magic == VSFS_MAGIC) {
@@ -140,10 +140,10 @@ mkfs(void* image, size_t size, mkfs_opts* opts)
   bitmap_t* ibmap;     // ptr to inode bitmap in mmap'd disk image
   bitmap_t* dbmap;     // ptr to data block bitmap in mmap'd image
   vsfs_inode* itable;  // ptr to inode table in mmap'd image
-
+  
   vsfs_inode* root_ino;      // ptr to root inode (in inode table)
   vsfs_dentry* root_entries; // ptr to root dir data block in mmap'd image
-
+  
   vsfs_blk_t nblks = size / VSFS_BLOCK_SIZE;
   uint32_t inodes_per_block = VSFS_BLOCK_SIZE / sizeof(vsfs_inode);
   bool ret = false;
@@ -177,15 +177,23 @@ mkfs(void* image, size_t size, mkfs_opts* opts)
   bitmap_set(dbmap, nblks, VSFS_IMAP_BLKNUM, true); // inode bitmap block
   bitmap_set(dbmap, nblks, VSFS_DMAP_BLKNUM, true); // data bitmap block
 
-  // TODO: Calculate size of inode table and mark inode table blocks allocated.
-  (void)inodes_per_block;
+  // Calculate size of inode table and mark inode table blocks allocated.
+  uint32_t itable_blks = div_round_up(opts->n_inodes, inodes_per_block);
+  for (uint32_t i = 0; i < itable_blks; i++)
+    bitmap_set(dbmap, nblks, VSFS_ITBL_BLKNUM + i, true); 
 
-  // TODO: Initialize the root directory.
+  // Initialize the root directory.
   // 1. Mark root directory inode allocated in inode bitmap
+  bitmap_set(ibmap, nblks, VSFS_ROOT_INO, true);
 
   // 2. Initialize fields of root dir inode (the mtime is done for you)
-  itable = (vsfs_inode*)(image + VSFS_ITBL_BLKNUM * VSFS_BLOCK_SIZE);
+  itable = (vsfs_inode*) (image + VSFS_ITBL_BLKNUM * VSFS_BLOCK_SIZE);
   root_ino = &itable[VSFS_ROOT_INO];
+
+  root_ino->i_mode = S_IFDIR | 0777;
+  root_ino->i_nlink = 2;
+  root_ino->i_blocks = 1;
+  root_ino->i_size = VSFS_BLOCK_SIZE;
 
   if (clock_gettime(CLOCK_REALTIME, &(root_ino->i_mtime)) != 0) {
     perror("clock_gettime");
@@ -193,17 +201,33 @@ mkfs(void* image, size_t size, mkfs_opts* opts)
   }
 
   // 3. Allocate a data block for root directory; record it in root inode
-  (void)root_entries;
+  vsfs_blk_t data_reg = VSFS_ITBL_BLKNUM + itable_blks;
+  int err = bitmap_alloc(dbmap, nblks, &root_ino->i_direct[0]);
+  assert(!err);
+  root_entries = (vsfs_dentry*) (image + (data_reg + root_ino->i_direct[0]) * VSFS_BLOCK_SIZE);
 
   // 4. Create '.' and '..' entries in root dir data block.
+  strcpy(root_entries[0].name, ".");
+  root_entries[0].ino = VSFS_ROOT_INO;
+  strcpy(root_entries[1].name, "..");
+  root_entries[1].ino = VSFS_ROOT_INO; 
 
   // 5. Initialize other dir entries in block to invalid / unused state
   //    Since 0 is a valid inode, use VSFS_INO_MAX to indicate invalid.
+  uint32_t dentry_num = VSFS_BLOCK_SIZE / sizeof(vsfs_dentry);
+  for (uint32_t i = 2; i < dentry_num; i++)
+    root_entries[i].ino = VSFS_INO_MAX;
 
   // TODO: Initialize fields of superblock after everything else succeeds.
   // Set start of data region to first block after inode table.
   sb = (vsfs_superblock*)image;
-  (void)sb;
+  sb->magic = VSFS_MAGIC;
+  sb->size = size;
+  sb->num_inodes = opts->n_inodes;
+  sb->free_inodes = sb->num_inodes - 1;
+  sb->num_blocks = nblks;
+  sb->free_blocks = sb->num_blocks - (3 + itable_blks + root_ino->i_blocks);
+  sb->data_region = data_reg;
 
   ret = true;
 out:
