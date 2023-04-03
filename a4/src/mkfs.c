@@ -201,10 +201,9 @@ mkfs(void* image, size_t size, mkfs_opts* opts)
   }
 
   // 3. Allocate a data block for root directory; record it in root inode
-  vsfs_blk_t data_reg = VSFS_ITBL_BLKNUM + itable_blks;
   int err = bitmap_alloc(dbmap, nblks, &root_ino->i_direct[0]);
   assert(!err);
-  root_entries = (vsfs_dentry*) (image + (data_reg + root_ino->i_direct[0]) * VSFS_BLOCK_SIZE);
+  root_entries = (vsfs_dentry*) (image + root_ino->i_direct[0] * VSFS_BLOCK_SIZE);
 
   // 4. Create '.' and '..' entries in root dir data block.
   strcpy(root_entries[0].name, ".");
@@ -227,7 +226,7 @@ mkfs(void* image, size_t size, mkfs_opts* opts)
   sb->free_inodes = sb->num_inodes - 1;
   sb->num_blocks = nblks;
   sb->free_blocks = sb->num_blocks - (3 + itable_blks + root_ino->i_blocks);
-  sb->data_region = data_reg;
+  sb->data_region = VSFS_ITBL_BLKNUM + itable_blks;
 
   ret = true;
 out:
