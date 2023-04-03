@@ -98,27 +98,93 @@ get_fs(void)
   return (fs_ctx*)fuse_get_context()->private_data;
 }
 
-/* Returns the inode number for the element at the end of the path
- * if it exists.  If there is any error, return -1.
- * Possible errors include:
- *   - The path is not an absolute path
- *   - An element on the path cannot be found
+/**
+ * Find dentry with name in dir block.
+ * Returns 0 if successful, -ENOENT if no such dentry.
+ */
+static int
+find_in_blk(const char* name, vsfs_ino_t* ino, vsfs_blk_t blk) {
+  fs_ctx *fs = get_fs();
+  vsfs_dentry* blk_ptr = (vsfs_dentry*) (fs->sb + blk * VSFS_BLOCK_SIZE);
+  for (uint32_t i = 0; i < VSFS_BLOCK_SIZE / sizeof(vsfs_dentry); i++) {
+    if (strcmp(blk_ptr[i].name, name) == 0) {
+      *ino = blk_ptr[i].ino;
+      return 0;
+    }
+  }
+  return -ENOENT;
+}
+
+/**
+ * Find dentry with name in dir.
+ * Returns 0 if successful, -ENOENT if no such dentry.
+ */
+static int
+find_in_dir(const char* name, vsfs_ino_t* ino, vsfs_ino_t dir) {
+  fs_ctx *fs = get_fs();
+  vsfs_inode* dir_ino = &fs->itable[dir];
+  for (uint32_t i = 0; i < VSFS_NUM_DIRECT; i++) {
+    if (dir_ino->i_direct[i] == 0)
+      continue;
+    int ret = find_in_blk(name, ino, dir_ino->i_direct[i]);
+    if (ret == 0)
+      return 0;
+  }
+  if (dir_ino->i_indirect == 0)
+    return -ENOENT;
+  return find_in_blk(name, ino, dir_ino->i_indirect);
+}
+
+/** 
+ * Same as lookup but looks up relative path in dir.
+ */
+static int
+path_lookup_in_dir(const char* path, vsfs_ino_t* ino, vsfs_ino_t dir) {
+  
+  char *slsh = strchr(path + 1, '/');
+  if (slsh == NULL) { // file
+    return find_in_dir(path + 1, ino, dir);
+  }
+  // directory
+  int child_len = slsh - (path + 1);
+  char* child_name = malloc(child_len + 1);
+  strncpy(child_name, path + 1, child_len);
+  child_name[child_len] = '\0';
+
+  vsfs_ino_t* child_ino = malloc(sizeof(vsfs_inode));
+  find_in_dir(child_name, child_ino, dir);
+  int ret = path_lookup_in_dir(slsh, ino, *child_ino);
+
+  free(child_ino);
+  free(child_name);
+  return ret;
+}
+
+/* Finds the inode number for the element at the end of the path
+ * if it exists.  
+ *
+ * Errors:
+ *   ENOENT   An element on the path cannot be found
+ *   ENOTDIR  The path is not an abosulte path
+ *
+ * @param path  path to a file or directory.
+ * @param pointer to the ino that receives the result.
+ * @return 0 on success; -errno on error.
  */
 static int
 path_lookup(const char* path, vsfs_ino_t* ino)
 {
   if (path[0] != '/') {
     fprintf(stderr, "Not an absolute path\n");
-    return -ENOSYS;
+    return -ENOTDIR;
   }
 
-  // TODO: complete this function and any helper functions
   if (strcmp(path, "/") == 0) {
     *ino = VSFS_ROOT_INO;
     return 0;
   }
-
-  return -ENOSYS;
+  
+  return path_lookup_in_dir(path, ino, VSFS_ROOT_INO);
 }
 
 /**
@@ -189,28 +255,21 @@ vsfs_getattr(const char* path, struct stat* st)
   if (strlen(path) >= VSFS_PATH_MAX)
     return -ENAMETOOLONG;
   fs_ctx* fs = get_fs();
-
   memset(st, 0, sizeof(*st));
 
-  // NOTE: This is just a placeholder that allows the file system to be
-  //      mounted without errors.
-  //      You should remove this from your implementation.
-  if (strcmp(path, "/") == 0) {
-    // NOTE: all the fields set below are required and must be set
-    // according to the information stored in the corresponding inode
-    st->st_mode = S_IFDIR | 0777;
-    st->st_nlink = 2;
-    st->st_size = 0;
-    st->st_blocks = 0 * VSFS_BLOCK_SIZE / 512;
-    st->st_mtim = (struct timespec){ 0 };
-    return 0;
-  }
-
-  // TODO: lookup the inode for given path and, if it exists, fill in the
-  // required fields based on the information stored in the inode
-  (void)fs;
-  (void)path_lookup;
-  return -ENOSYS;
+  vsfs_ino_t* ino_ind = malloc(sizeof(vsfs_ino_t));
+  int err = path_lookup(path, ino_ind);
+  if (err < 0)
+    return err;
+  vsfs_inode* ino = &fs->itable[*ino_ind];
+  free(ino_ind);
+  
+  st->st_mode = ino->i_mode;
+  st->st_nlink = ino->i_nlink;
+  st->st_size = ino->i_size;
+  st->st_blocks = ino->i_blocks;
+  st->st_mtim = ino->i_mtime;
+  return 0;
 }
 
 /**

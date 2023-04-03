@@ -107,7 +107,7 @@ static bool
 vsfs_is_present(void* image)
 {
   // Check if the image already contains a valid vsfs superblock.
-  // This may be overly trusting. You can add additional sanity checks. TODO
+  // This may be overly trusting. You can add additional sanity checks.
 
   vsfs_superblock* sb = (vsfs_superblock*)image;
   if (sb->magic == VSFS_MAGIC) {
@@ -132,7 +132,7 @@ vsfs_is_present(void* image)
 static bool
 mkfs(void* image, size_t size, mkfs_opts* opts)
 {
-  // TODO: initialize the superblock and create an empty root directory
+  // initialize the superblock and create an empty root directory
   // NOTE: the mode of the root directory inode should be set
   //      to S_IFDIR | 0777
 
@@ -217,7 +217,7 @@ mkfs(void* image, size_t size, mkfs_opts* opts)
   for (uint32_t i = 2; i < dentry_num; i++)
     root_entries[i].ino = VSFS_INO_MAX;
 
-  // TODO: Initialize fields of superblock after everything else succeeds.
+  // Initialize fields of superblock after everything else succeeds.
   // Set start of data region to first block after inode table.
   sb = (vsfs_superblock*)image;
   sb->magic = VSFS_MAGIC;

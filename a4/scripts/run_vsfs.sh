@@ -48,6 +48,8 @@ exec 2>"$OUT_DIR/test_vsfs.log"
 
 # teach.cs specific. if you are locally, comment this out and assign the variable to a local dir
 CSC369_A4_DISK_DIR="/u/csc369h/winter/pub/a4"
+LOCAL_A4_DISK_DIR="${BASH_SOURCE%/*}"/../images
+mkdir -p "$LOCAL_A4_DISK_DIR"
 
 test_vsfs "vsfs-empty" "$CSC369_A4_DISK_DIR/vsfs-empty.disk" 64 "$TESTS_DIR"
 test_vsfs "vsfs-1file" "$CSC369_A4_DISK_DIR/vsfs-1file.disk" 64 "$TESTS_DIR"
