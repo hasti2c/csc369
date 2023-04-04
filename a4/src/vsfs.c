@@ -99,7 +99,7 @@ get_fs(void)
 }
 
 /**
- * Find dentry with name in dir block.
+ * Find dentry with name in block.
  * Returns 0 if successful, -ENOENT if no such dentry.
  */
 static int
@@ -114,6 +114,22 @@ find_in_block(const char* name, vsfs_ino_t* ino, vsfs_blk_t blk) {
   }
   return -ENOENT;
 }
+
+/**
+ * Find dentry with name in indirect block.
+ * Returns 0 if successful, -ENOENT if no such dentry.
+ */
+static int
+find_in_indirect_block(const char* name, vsfs_ino_t* ino, vsfs_blk_t blk) {
+  fs_ctx *fs = get_fs();
+  vsfs_blk_t* sub_blks = (vsfs_blk_t*) (fs->image + blk * VSFS_BLOCK_SIZE);
+  for (uint32_t i = 0; i < VSFS_BLOCK_SIZE / sizeof(vsfs_ino_t); i++) {
+    if (sub_blks[i] != 0 && find_in_block(name, ino, sub_blks[i]) == 0) // TODO make sure to clear before allocating indirect block
+      return 0;
+  }
+  return -ENOENT;
+}
+
 
 /* Finds the inode number for the element at the end of the path
  * if it exists.  
@@ -147,7 +163,7 @@ path_lookup(const char* path, vsfs_ino_t* ino)
       return 0;
   }
   if (root_ino->i_indirect != 0)
-    return find_in_block(path + 1, ino, root_ino->i_indirect);
+    return find_in_indirect_block(path + 1, ino, root_ino->i_indirect);
   return -ENOENT;
 }
 
@@ -237,18 +253,31 @@ vsfs_getattr(const char* path, struct stat* st)
 }
 
 /**
- * Same as readdir but only on a block.
+ * Same as readdir but on a block.
  */
 static int
-vsfs_readblock(vsfs_blk_t blk,
-               void* buf,
-               fuse_fill_dir_t filler)
+vsfs_read_block(vsfs_blk_t blk, void* buf, fuse_fill_dir_t filler)
 {
   fs_ctx *fs = get_fs();
   vsfs_dentry* blk_ptr = (vsfs_dentry*) (fs->image + blk * VSFS_BLOCK_SIZE);
   for (uint32_t i = 0; i < VSFS_BLOCK_SIZE / sizeof(vsfs_dentry); i++) {
     if (blk_ptr[i].ino != VSFS_INO_MAX)
       if (filler(buf, blk_ptr[i].name, NULL, 0))
+        return -ENOMEM;
+  }
+  return 0;
+}
+
+/**
+ * Same as readdir but on an indirect block.
+ */
+static int
+vsfs_read_indirect_block(vsfs_blk_t blk, void* buf, fuse_fill_dir_t filler)
+{
+  fs_ctx *fs = get_fs();
+  vsfs_blk_t* sub_blks = (vsfs_blk_t*) (fs->image + blk * VSFS_BLOCK_SIZE);
+  for (uint32_t i = 0; i < VSFS_BLOCK_SIZE / sizeof(vsfs_ino_t); i++) {
+    if (sub_blks[i] != 0 && vsfs_read_block(sub_blks[i], buf, filler))
         return -ENOMEM;
   }
   return 0;
@@ -289,11 +318,11 @@ vsfs_readdir(const char* path,
   assert(!err);
   vsfs_inode* ino = &fs->itable[*ino_ind];
   for (uint32_t i = 0; i < VSFS_NUM_DIRECT; i++) {
-    if (ino->i_direct[i] != 0 && vsfs_readblock(ino->i_direct[i], buf, filler))
+    if (ino->i_direct[i] != 0 && vsfs_read_block(ino->i_direct[i], buf, filler))
       return -ENOMEM;
   }
   if (ino->i_indirect != 0)
-    return vsfs_readblock(ino->i_indirect, buf, filler);
+    return vsfs_read_indirect_block(ino->i_indirect, buf, filler);
   return 0;
 }
 
@@ -358,6 +387,104 @@ vsfs_rmdir(const char* path)
 }
 
 /**
+ * Finds empty dentry in block.
+ * @return 0 on success, -1 on error.
+ */
+static int
+find_empty_in_block(vsfs_blk_t blk, vsfs_dentry** dentry_ptr) {
+  fs_ctx *fs = get_fs();
+  vsfs_dentry* blk_ptr = (vsfs_dentry*) (fs->image + blk * VSFS_BLOCK_SIZE);
+  for (uint32_t i = 0; i < VSFS_BLOCK_SIZE / sizeof(vsfs_dentry); i++) {
+    if (blk_ptr[i].ino == VSFS_INO_MAX) {
+      *dentry_ptr = &blk_ptr[i];
+      return 0;
+    }
+  }
+  return -1;
+}
+
+/**
+ * Finds empty dentry in indirect block.
+ * @return 0 on success, -1 on error.
+ */
+static int
+find_empty_in_indirect_block(vsfs_blk_t blk, vsfs_dentry** dentry_ptr) {
+  fs_ctx *fs = get_fs();
+  vsfs_blk_t* sub_blks = (vsfs_blk_t*) (fs->image + blk * VSFS_BLOCK_SIZE);
+  for (uint32_t i = 0; i < VSFS_BLOCK_SIZE / sizeof(vsfs_ino_t); i++) {
+    if (sub_blks[i] != 0 && find_empty_in_block(sub_blks[i], dentry_ptr) == 0)
+        return 0;
+  }
+  return -1;
+}
+
+/**
+ * Finds empty dentry in dir.
+ * @return 0 on success, -1 on error.
+ */
+static int
+find_empty_dentry(vsfs_ino_t dir, vsfs_dentry** dentry_ptr) {
+  fs_ctx *fs = get_fs();
+  vsfs_inode* ino = &fs->itable[dir];
+  for (uint32_t i = 0; i < VSFS_NUM_DIRECT; i++) {
+    if (ino->i_direct[i] != 0 && find_empty_in_block(ino->i_direct[i], dentry_ptr) == 0)
+      return 0;
+  }
+  if (ino->i_indirect != 0) 
+    return find_empty_in_indirect_block(ino->i_indirect, dentry_ptr);
+  return -1;
+}
+
+/*
+ * Put blk in indir_blk.
+ * @return 0 on success, -1 on failure.
+ */
+static int
+put_block_in_indirect(vsfs_blk_t indir_blk, vsfs_blk_t blk) {
+  fs_ctx *fs = get_fs();
+  vsfs_blk_t* sub_blks = (vsfs_blk_t*) (fs->image + indir_blk * VSFS_BLOCK_SIZE);
+  for (uint32_t i = 0; i < VSFS_BLOCK_SIZE / sizeof(vsfs_ino_t); i++) {
+    if (sub_blks[i] == 0) {
+      sub_blks[i] = blk;
+      return 0;
+    }
+  }
+  return -1;
+}
+
+/*
+ * Allocate new block to inode.
+ * @return 0 on success, -1 on failure.
+ */
+static int
+alloc_block(vsfs_ino_t ino_ind, vsfs_blk_t* blk) {
+  fs_ctx* fs = get_fs();
+  vsfs_inode* ino = &fs->itable[ino_ind];
+  if (bitmap_alloc(fs->dbmap, fs->sb->num_inodes, blk))
+    return -1;
+  for (uint32_t i = 0; i < VSFS_NUM_DIRECT; i++) {
+    if (ino->i_direct[i] == 0) {
+      ino->i_direct[i] = *blk;
+      bitmap_set(fs->dbmap, fs->sb->num_inodes, *blk, true);
+      return 0;
+    }
+  }
+
+  if (ino->i_indirect == 0) { // doesn't have indirect block
+    if (bitmap_alloc(fs->dbmap, fs->sb->num_inodes, &ino->i_indirect))
+      return -1;
+    ino->i_blocks++;
+    ino->i_size += VSFS_BLOCK_SIZE;
+    memset(fs->image + ino->i_indirect * VSFS_BLOCK_SIZE, 0, VSFS_BLOCK_SIZE);
+    bitmap_set(fs->dbmap, fs->sb->num_inodes, ino->i_indirect, true);
+  }
+  if (put_block_in_indirect(ino->i_indirect, *blk))
+    return -1;
+  bitmap_set(fs->dbmap, fs->sb->num_inodes, *blk, true);
+  return 0;
+}
+
+/**
  * Create a file.
  *
  * Implements the open()/creat() system call.
@@ -381,13 +508,58 @@ vsfs_create(const char* path, mode_t mode, struct fuse_file_info* fi)
 {
   (void)fi; // unused
   assert(S_ISREG(mode));
+  assert(path[0] == '/');
   fs_ctx* fs = get_fs();
 
-  // TODO: create a file at given path with given mode
-  (void)path;
-  (void)mode;
-  (void)fs;
-  return -ENOSYS;
+  // find inode and block
+  vsfs_ino_t* ino_ind = malloc(sizeof(vsfs_ino_t));
+  int err = bitmap_alloc(fs->ibmap, fs->sb->num_inodes, ino_ind);
+  vsfs_blk_t* blk_ind = malloc(sizeof(vsfs_blk_t));
+  err |= bitmap_alloc(fs->dbmap, fs->sb->num_inodes, blk_ind);
+  if (err) {
+    free(ino_ind);
+    free(blk_ind);
+    return -ENOSPC;
+  }
+  // find dentry
+  vsfs_dentry** dentry_ptr = malloc(sizeof(vsfs_dentry*));
+  if (find_empty_dentry(VSFS_ROOT_INO, dentry_ptr)) {
+    vsfs_blk_t* new_blk = malloc(sizeof(vsfs_blk_t));
+    if (alloc_block(VSFS_ROOT_INO, new_blk)) {
+      free(ino_ind);
+      free(blk_ind);
+      free(new_blk);
+      return -ENOSPC;
+    }
+    err = find_empty_in_indirect_block(*new_blk, dentry_ptr);
+    assert(!err);
+  }
+  // from here we know there is no space error
+  bitmap_set(fs->ibmap, fs->sb->num_inodes, *ino_ind, true);
+  bitmap_set(fs->dbmap, fs->sb->num_inodes, *blk_ind, true);
+  
+  // initialize inode
+  vsfs_inode* ino = &fs->itable[*ino_ind];
+  ino->i_mode = mode;
+  ino->i_nlink = 1;
+  ino->i_blocks = 1;
+  ino->i_size = 0;
+  err = clock_gettime(CLOCK_REALTIME, &ino->i_mtime);
+  assert(!err);
+  ino->i_direct[0] = *blk_ind;
+  for (uint32_t i = 1; i < VSFS_NUM_DIRECT; i++)
+    ino->i_direct[i] = 0;
+  ino->i_indirect = 0;
+
+  // add inode to directory
+  vsfs_dentry* dentry = *dentry_ptr;
+  dentry->ino = *ino_ind;
+  strcpy(dentry->name, path + 1); 
+
+  free(ino_ind); 
+  free(blk_ind);
+  free(dentry_ptr);
+  return 0;
 }
 
 /**
