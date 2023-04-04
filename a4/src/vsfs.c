@@ -124,7 +124,7 @@ find_in_indirect_block(const char* name, vsfs_ino_t* ino, vsfs_blk_t blk) {
   fs_ctx *fs = get_fs();
   vsfs_blk_t* sub_blks = (vsfs_blk_t*) (fs->image + blk * VSFS_BLOCK_SIZE);
   for (uint32_t i = 0; i < VSFS_BLOCK_SIZE / sizeof(vsfs_ino_t); i++) {
-    if (sub_blks[i] != 0 && find_in_block(name, ino, sub_blks[i]) == 0) // TODO make sure to clear before allocating indirect block
+    if (sub_blks[i] != 0 && find_in_block(name, ino, sub_blks[i]) == 0) 
       return 0;
   }
   return -ENOENT;
@@ -687,14 +687,10 @@ static int
 vsfs_utimens(const char* path, const struct timespec times[2])
 {
   fs_ctx* fs = get_fs();
-  vsfs_inode* ino = NULL;
 
-  // TODO: update the modification timestamp (mtime) in the inode for given
+  // update the modification timestamp (mtime) in the inode for given
   // path with either the time passed as argument or the current time,
   // according to the utimensat man page
-  (void)path;
-  (void)fs;
-  (void)ino;
 
   // 0. Check if there is actually anything to be done.
   if (times[1].tv_nsec == UTIME_OMIT) {
@@ -702,23 +698,27 @@ vsfs_utimens(const char* path, const struct timespec times[2])
     return 0;
   }
 
-  // 1. TODO: Find the inode for the final component in path
+  // 1. Find the inode for the final component in path
+  vsfs_ino_t* ino_ind = malloc(sizeof(vsfs_ino_t));
+  int err = path_lookup(path, ino_ind);
+  assert(!err);
+  vsfs_inode* ino = &fs->itable[*ino_ind];
+  free(ino_ind);
 
   // 2. Update the mtime for that inode.
   //    This code is commented out to avoid failure until you have set
   //    'ino' to point to the inode structure for the inode to update.
   if (times[1].tv_nsec == UTIME_NOW) {
-    // if (clock_gettime(CLOCK_REALTIME, &(ino->i_mtime)) != 0) {
+    if (clock_gettime(CLOCK_REALTIME, &(ino->i_mtime)) != 0) {
     // clock_gettime should not fail, unless you give it a
     // bad pointer to a timespec.
-    //	assert(false);
-    //}
+      assert(false);
+    }
   } else {
-    // ino->i_mtime = times[1];
+    ino->i_mtime = times[1];
   }
 
-  // return 0;
-  return -ENOSYS;
+  return 0;
 }
 
 /**
