@@ -562,6 +562,59 @@ vsfs_create(const char* path, mode_t mode, struct fuse_file_info* fi)
   return 0;
 }
 
+/* Free block. */
+void
+free_block (vsfs_blk_t blk) {
+  fs_ctx* fs = get_fs();
+  bitmap_free(fs->dbmap, fs->sb->num_inodes, blk);
+  fs->sb->free_blocks++;
+}
+
+/* Free indirect block and all blocks in it. */
+void
+free_indirect_block (vsfs_blk_t blk) {
+  fs_ctx *fs = get_fs();
+  vsfs_blk_t* sub_blks = (vsfs_blk_t*) (fs->image + blk * VSFS_BLOCK_SIZE);
+  for (uint32_t i = 0; i < VSFS_BLOCK_SIZE / sizeof(vsfs_ino_t); i++) {
+    if (sub_blks[i] != 0) 
+      free_block(sub_blks[i]);
+  }
+  free_block(blk);
+}
+
+/**
+ * Remove ino from block.
+ * @return 0 on success, -1 on failure.
+ */
+static int
+remove_from_block(vsfs_blk_t blk, vsfs_ino_t ino) {
+  fs_ctx *fs = get_fs();
+  vsfs_dentry* blk_ptr = (vsfs_dentry*) (fs->image + blk * VSFS_BLOCK_SIZE);
+  for (uint32_t i = 0; i < VSFS_BLOCK_SIZE / sizeof(vsfs_dentry); i++) {
+    if (blk_ptr[i].ino == ino) {
+      blk_ptr[i].ino = VSFS_INO_MAX;
+      blk_ptr[i].name[0] = '\0';
+      return 0;
+    }
+  }
+  return -1;
+}
+
+/**
+ * Remove ino from indirect block.
+ * @return 0 on success, -1 on failure.
+ */
+static int
+remove_from_indirect_block(vsfs_blk_t blk, vsfs_ino_t ino) {
+  fs_ctx *fs = get_fs();
+  vsfs_blk_t* sub_blks = (vsfs_blk_t*) (fs->image + blk * VSFS_BLOCK_SIZE);
+  for (uint32_t i = 0; i < VSFS_BLOCK_SIZE / sizeof(vsfs_ino_t); i++) {
+    if (sub_blks[i] != 0 && remove_from_block(sub_blks[i], ino) == 0) 
+      return 0;
+  }
+  return -1;
+}
+
 /**
  * Remove a file.
  *
@@ -579,11 +632,38 @@ static int
 vsfs_unlink(const char* path)
 {
   fs_ctx* fs = get_fs();
+  vsfs_ino_t* ino_ind = malloc(sizeof(vsfs_ino_t));
+  int err = path_lookup(path, ino_ind);
+  assert(!err);
+  vsfs_inode* ino = &fs->itable[*ino_ind];
+  assert(S_ISREG(ino->i_mode) && ino->i_nlink != 0);
+ 
+  // unlink & remove if no links
+  ino->i_nlink--;
+  if (ino->i_nlink == 0) {
+    for (uint32_t i = 0; i < VSFS_NUM_DIRECT; i++) {
+      if (ino->i_direct[i] != 0)
+        free_block(ino->i_direct[i]);
+    }
+    if (ino->i_indirect != 0)
+      free_indirect_block(ino->i_indirect);
+    bitmap_free(fs->ibmap, fs->sb->num_inodes, *ino_ind);
+    fs->sb->free_inodes++;
+  }
 
-  // TODO: remove the file at given path
-  (void)path;
-  (void)fs;
-  return -ENOSYS;
+  // remove from directory
+  vsfs_inode* dir = &fs->itable[VSFS_ROOT_INO]; 
+  for (int i = 0; i < VSFS_NUM_DIRECT; i++) {
+    if (dir->i_direct[i] != 0 && remove_from_block(dir->i_direct[i], *ino_ind) == 0) {
+      free(ino_ind);
+      return 0;
+    }
+  }
+  assert(dir->i_indirect != 0);
+  err = remove_from_indirect_block(dir->i_indirect, *ino_ind);
+  assert(!err);
+  free(ino_ind);
+  return 0;
 }
 
 /**
