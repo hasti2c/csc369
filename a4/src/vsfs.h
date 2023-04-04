@@ -162,7 +162,7 @@ typedef struct vsfs_dentry
 static_assert(sizeof(vsfs_dentry) == 256, "invalid dentry size");
 
 /** Maximum number of blocks for a file. */
-#define VSFS_MAX_FILE_BLOCKS (VSFS_NUM_DIRECT + (VSFS_BLOCK_SIZE / sizeof(vsfs_dentry)))
+#define VSFS_MAX_FILE_BLOCKS (VSFS_NUM_DIRECT + (VSFS_BLOCK_SIZE / sizeof(vsfs_blk_t)))
 
 /** Maximum bytes for a file. */
 #define VSFS_MAX_FILE_SIZE (VSFS_BLOCK_SIZE * VSFS_MAX_FILE_BLOCKS)

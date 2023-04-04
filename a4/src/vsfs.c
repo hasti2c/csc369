@@ -461,14 +461,9 @@ alloc_indirect_block(vsfs_ino_t ino_ind, vsfs_blk_t blk) {
   vsfs_inode* ino = &fs->itable[ino_ind];
   assert(ino->i_indirect == 0);
   ino->i_indirect = blk;
-  ino->i_blocks++;
+  ino->i_blocks++; // TODO does it count
   ino->i_size += VSFS_BLOCK_SIZE;
-  vsfs_dentry* sub_blks = (vsfs_dentry*) (fs->image + ino->i_indirect * VSFS_BLOCK_SIZE);
-  memset(sub_blks, 0, VSFS_BLOCK_SIZE);
-  for (uint32_t i = 0; i < VSFS_BLOCK_SIZE / sizeof(vsfs_ino_t); i++) {
-    sub_blks[i].ino = VSFS_INO_MAX;
-    sub_blks[i].name[0] = '\0';
-  }
+  memset(fs->image + ino->i_indirect * VSFS_BLOCK_SIZE, 0, VSFS_BLOCK_SIZE);
   bitmap_set(fs->dbmap, fs->sb->num_inodes, ino->i_indirect, true);
 }
 
@@ -484,6 +479,7 @@ alloc_block(vsfs_ino_t ino_ind, vsfs_blk_t blk) {
     if (ino->i_direct[i] == 0) {
       ino->i_direct[i] = blk;
       bitmap_set(fs->dbmap, fs->sb->num_inodes, blk, true);
+      ino->i_blocks++;
       return 0;
     }
   }
@@ -500,6 +496,7 @@ alloc_block(vsfs_ino_t ino_ind, vsfs_blk_t blk) {
   if (put_block_in_indirect(ino->i_indirect, blk))
     return -1; // doesn't happen if newly allocated indirect block
   bitmap_set(fs->dbmap, fs->sb->num_inodes, blk, true);
+  ino->i_blocks++;
   return 0;
 }
 
@@ -751,10 +748,10 @@ seek_in_indirect_block(vsfs_blk_t indir_blk, uint64_t offset, vsfs_blk_t* blk, u
   if (blk_cnt >= VSFS_BLOCK_SIZE / sizeof(vsfs_ino_t))
     return -1;
   fs_ctx *fs = get_fs();
-  vsfs_dentry* sub_blks = (vsfs_dentry*) (fs->image + indir_blk * VSFS_BLOCK_SIZE);
-  if (sub_blks[blk_cnt].ino == VSFS_INO_MAX) // TODO: assuming in order w no holes?
+  vsfs_blk_t* sub_blks = (vsfs_blk_t*) (fs->image + indir_blk * VSFS_BLOCK_SIZE);
+  if (sub_blks[blk_cnt] == 0) // TODO: assuming in order w no holes?
     return -1;
-  *blk = sub_blks[blk_cnt].ino; // TODO ino and not blk??????? wtf
+  *blk = sub_blks[blk_cnt];
   *offset_in_blk = offset % VSFS_BLOCK_SIZE;
   return 0;
 }
@@ -768,28 +765,15 @@ seek_in_file(vsfs_ino_t ino_ind, uint64_t offset, vsfs_blk_t* blk, uint64_t* off
   assert(offset < VSFS_MAX_FILE_SIZE);
   fs_ctx* fs = get_fs();
   vsfs_inode* ino = &fs->itable[ino_ind];
-  uint64_t blk_cnt = offset / VSFS_BLOCK_SIZE;
-  if (blk_cnt < VSFS_NUM_DIRECT) {
-    if (ino->i_direct[blk_cnt] == 0)
+  uint64_t blk_num = offset / VSFS_BLOCK_SIZE;
+  if (blk_num < VSFS_NUM_DIRECT) {
+    if (ino->i_direct[blk_num] == 0)
       return -1;
-    *blk = ino->i_direct[blk_cnt];
+    *blk = ino->i_direct[blk_num];
   } else if (ino->i_indirect == 0 || seek_in_indirect_block(ino->i_indirect, offset - VSFS_BLOCK_SIZE * VSFS_NUM_DIRECT, blk, offset_in_blk))
       return -1;
   *offset_in_blk = offset % VSFS_BLOCK_SIZE;
   return 0;
-}
-
-/**
- * Shorten blk such that it contains only blk_num.
- */
-void
-indirect_block_shorten(vsfs_blk_t blk, uint32_t blk_num) {
-  fs_ctx *fs = get_fs();
-  vsfs_dentry* sub_blks = (vsfs_dentry*) (fs->image + blk * VSFS_BLOCK_SIZE);
-  for (uint32_t i = blk_num; i < VSFS_BLOCK_SIZE / sizeof(vsfs_ino_t); i++) {
-    sub_blks[i].ino = VSFS_INO_MAX;
-    sub_blks[i].name[0] = '\0';
-  }
 }
 
 /**
@@ -841,7 +825,8 @@ vsfs_truncate(const char* path, off_t size)
       }
       if (new_blks >= VSFS_NUM_DIRECT) {
         assert(old_blks >= VSFS_NUM_DIRECT && ino->i_indirect != 0);
-        indirect_block_shorten(ino->i_indirect, new_blks - VSFS_NUM_DIRECT);
+        uint64_t keep_blks = new_blks - VSFS_NUM_DIRECT;
+        memset(fs->image + ino->i_indirect * VSFS_BLOCK_SIZE + keep_blks * sizeof(vsfs_blk_t), 0, VSFS_BLOCK_SIZE - keep_blks * sizeof(vsfs_blk_t));
       } else if (old_blks >= VSFS_NUM_DIRECT) {
         assert(ino->i_indirect != 0);
         free_indirect_block(ino->i_indirect);
@@ -927,14 +912,31 @@ vsfs_read(const char* path,
 {
   (void)fi; // unused
   fs_ctx* fs = get_fs();
+  vsfs_ino_t* ino_ind = malloc(sizeof(vsfs_ino_t));
+  int err = path_lookup(path, ino_ind);
+  assert(!err);
+  vsfs_inode* ino = &fs->itable[*ino_ind];  
+ 
+  if ((uint64_t) offset >= ino->i_size) {
+    memset(buf, 0, size);
+    free(ino_ind);
+    return 0;
+  }
+ 
+  vsfs_blk_t* blk = malloc(sizeof(vsfs_blk_t));
+  uint64_t* offset_in_blk = malloc(sizeof(uint64_t));
+  err = seek_in_file(*ino_ind, offset, blk, offset_in_blk); 
+  assert(!err);
+  void* ptr = (fs->image + *blk * VSFS_BLOCK_SIZE + *offset_in_blk);
 
-  // TODO: read data from the file at given offset into the buffer
-  (void)path;
-  (void)buf;
-  (void)size;
-  (void)offset;
-  (void)fs;
-  return -ENOSYS;
+  int ret = (offset + size <= ino->i_size) ? size : ino->i_size - offset;
+  memcpy(buf, ptr, ret);
+  memset(buf + ret, 0, size - ret);
+  
+  free(ino_ind);
+  free(blk);
+  free(offset_in_blk);
+  return ret;
 }
 
 /**
