@@ -204,6 +204,7 @@ mkfs(void* image, size_t size, mkfs_opts* opts)
   int err = bitmap_alloc(dbmap, nblks, &root_ino->i_direct[0]);
   bitmap_set(dbmap, nblks, root_ino->i_direct[0], true);
   assert(!err);
+  (void) err;
   for (uint32_t i = 1; i < VSFS_NUM_DIRECT; i++)
     root_ino->i_direct[i] = 0; // no block allocated
   root_ino->i_indirect = 0;  // no block allocated
